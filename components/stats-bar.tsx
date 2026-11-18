@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CLAUDE_CODE_PROVIDER, sessionCacheHitRate, subscriptionLabels, subscriptionLabel, type cliContextWindowOf, type SessionPricing, type TurnUsage } from "@/src/core";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { ANTIGRAVITY_PROVIDER, CLAUDE_CODE_PROVIDER, sessionCacheHitRate, subscriptionLabels, subscriptionLabel, type cliContextWindowOf, type SessionPricing, type TurnUsage } from "@/src/core";
 import { formatTokens, formatUsd, planCostLabel, prettyModel } from "@/components/usage-format";
 import { ModelControl, catalogLimits, useModelCatalog } from "@/components/model-picker";
+import { usePopoverDismiss } from "@/components/popover-dismiss";
+import { INTERACTION_LAYER_Z_BASE } from "@/components/host-dialog";
 
 export function formatContextMeasurement(tokens: number | null, limit: number | null): string {
 	const numerator = tokens === null ? "?" : formatTokens(tokens);
@@ -77,27 +79,8 @@ export function StatsBar({
 	// Same dropdown discipline as the model control (owner, df4433f treatment,
 	// stats round 1): close on any pointerdown outside the bar or on Escape.
 	const barRef = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		if (!open) return;
-		const onPointerDown = (e: PointerEvent) => {
-			if (barRef.current && !barRef.current.contains(e.target as Node)) setOpen(false);
-		};
-		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
-				// THE ONE-ESC LAW (keyboard round 2026-10-06): claim — the
-				// window chain must not also act under this popover.
-				e.preventDefault();
-				e.stopPropagation();
-				setOpen(false);
-			}
-		};
-		document.addEventListener("pointerdown", onPointerDown);
-		document.addEventListener("keydown", onKeyDown);
-		return () => {
-			document.removeEventListener("pointerdown", onPointerDown);
-			document.removeEventListener("keydown", onKeyDown);
-		};
-	}, [open]);
+	const panelRef = useRef<HTMLDivElement>(null);
+	const popupLayer = usePopoverDismiss(barRef, open && !!(chatId || turns.length), () => setOpen(false), { layerRootRef: panelRef });
 	// The picker reports its effective selection. CLI windows are session-
 	// scoped; unknown metadata always means usage-only, never a guessed maximum.
 	const { catalog } = useModelCatalog();
@@ -110,7 +93,7 @@ export function StatsBar({
 	// otherwise "—" (never a fake $0.0000).
 	const pricedCount = turns.length - unpriced - subscription;
 	const providers = pricing?.subscriptionProviders ?? subscriptionLabels(turns.map((turn) => turn.model));
-	const cliBilled = turns.some((turn) => turn.model.startsWith(`${CLAUDE_CODE_PROVIDER}:`));
+	const cliBilled = turns.some((turn) => turn.model.startsWith(`${CLAUDE_CODE_PROVIDER}:`) || turn.model.startsWith(`${ANTIGRAVITY_PROVIDER}:`));
 	const costLabel = planCostLabel(pricedCount > 0 ? cost : null, cliBilled ? [...providers, "CLI"] : providers);
 
 	return (
@@ -152,8 +135,10 @@ export function StatsBar({
 			</button>
 				{open && (
 					<div
+						ref={panelRef}
 						data-testid="stats-detail"
-						className="absolute bottom-full left-1/2 z-40 mb-1.5 w-72 -translate-x-1/2 rounded-xl border bg-card p-3 text-xs shadow-xl"
+						style={{ zIndex: INTERACTION_LAYER_Z_BASE + popupLayer.order }}
+						className="absolute bottom-full left-1/2 mb-1.5 w-72 -translate-x-1/2 rounded-xl border bg-card p-3 text-xs shadow-xl"
 					>
 						<div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 							Session stats
@@ -201,7 +186,7 @@ export function StatsBar({
 												</span>
 												<span className="flex shrink-0 items-center gap-2 tabular-nums text-card-foreground">
 													<span className="text-muted-foreground">{turn.steps.length} steps</span>
-													<span>{turn.model.startsWith(`${CLAUDE_CODE_PROVIDER}:`) ? "CLI" : subscriptionLabel(turn.model) ?? (c === null ? "—" : formatUsd(c))}</span>
+													<span>{turn.model.startsWith(`${CLAUDE_CODE_PROVIDER}:`) || turn.model.startsWith(`${ANTIGRAVITY_PROVIDER}:`) ? "CLI" : subscriptionLabel(turn.model) ?? (c === null ? "—" : formatUsd(c))}</span>
 												</span>
 											</li>
 										);

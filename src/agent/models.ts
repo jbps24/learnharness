@@ -20,6 +20,8 @@ import { chatGPTStream } from "./chatgpt-stream.ts";
 import type { ChatGPTDispatchLifecycle } from "./chatgpt-request-cycle.ts";
 import { createClaudeCodeProvider } from "./claude-code/provider.ts";
 import { streamClaudeCode } from "./claude-code/stream.ts";
+import { createAntigravityProvider } from "./antigravity/provider.ts";
+import { streamAntigravity } from "./antigravity/stream.ts";
 import { nativeSubscriptionId, nativeSubscriptionModel } from "./subscription-bridge.ts";
 import { nativeSubscriptionStream } from "./subscription-stream.ts";
 
@@ -32,7 +34,7 @@ export const APP_IDENTITY = Object.freeze({
 
 /**
  * The one engine factory every agent's model comes from (the pi-ai swap,
- * docs/pi-engine-swap.md). BYOK ALL THE WAY DOWN (owner, 2026-09-22):
+ * docs/archive/pi-engine-swap.md). BYOK ALL THE WAY DOWN (owner, 2026-09-22):
  * there are no factory pins — every engine resolves from a RESOLVED SPEC
  * (the settings chain's output) and the one builder here wires it to
  * pi-ai's federated catalogs.
@@ -92,6 +94,7 @@ export function piModels() {
 				: provider);
 		}
 		collection.setProvider(createClaudeCodeProvider(streamClaudeCode));
+		collection.setProvider(createAntigravityProvider(streamAntigravity));
 	}
 	providerSource?.sync(collection);
 	return collection;
