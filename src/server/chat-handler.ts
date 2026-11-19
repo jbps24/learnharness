@@ -59,7 +59,7 @@ import { persistTurn, triggerExtraction, TurnPersistenceError } from "./turn-ser
 import { hasProbeDone, hasUnresolvedQuestion, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
 import { samePluginQuestionOccurrence } from "../core/plugin-questions.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
-import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight } from "./compaction.ts";
+import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight, antigravityRequestTrigger, antigravitySummaryFit } from "./compaction.ts";
 import { COMPACTION_RESERVE_TOKENS } from "../core/compaction.ts";
 import { catalogContextLimits, refreshConnectionCatalog } from "./model-catalog.ts";
 import { emit } from "../core/events.ts";
@@ -365,7 +365,8 @@ export async function handleChatInput(
 	const modelIdForCompaction = `${conversationEngine.model.provider}:${conversationEngine.model.id}`;
 	const contextWindow = catalogContextLimits().get(modelIdForCompaction);
 	const thresholdTokens = effectiveThresholdTokens(effective.compaction?.thresholdTokens, contextWindow);
-	const systemPromptTokens = Math.ceil(composeInstructions(record.kind === "practice" ? "practice" : "teacher").length / 4);
+	const instructions = composeInstructions(record.kind === "practice" ? "practice" : "teacher");
+	const systemPromptTokens = Math.ceil(instructions.length / 4);
 	const estimateModel = effective.compaction.includeReasoning ? conversationEngine.model : undefined;
 	const fitsSideContext = (messages: readonly LhMessage[]) => {
 		const live = messages.filter((message) => (message as { role: string }).role !== "system");
@@ -394,6 +395,8 @@ export async function handleChatInput(
 			includeReasoning: effective.compaction.includeReasoning,
 			thresholdTokens,
 			systemPromptTokens,
+			requestOverLimit: antigravityRequestTrigger(conversationEngine.model.provider, instructions),
+			summaryRequestFits: antigravitySummaryFit(compactionEngine.model.provider),
 			projectMessages: (current) => {
 				try {
 					if (input.type === "plugin-question-answer" || input.type === "plugin-problem-submission") {
@@ -933,6 +936,7 @@ export async function handleChatInput(
 						const kickModelId = `${kickEngine.model.provider}:${kickEngine.model.id}`;
 						const freshRecord = stores.chatStore.getChat(chatId);
 						if (!freshRecord) return null;
+						const kickInstructions = composeInstructions(freshRecord.kind === "practice" ? "practice" : "teacher");
 						return {
 							chatStore: stores.chatStore,
 							engine: kickEngine,
@@ -944,7 +948,9 @@ export async function handleChatInput(
 								fresh.compaction?.thresholdTokens,
 								catalogContextLimits().get(kickModelId),
 							),
-							systemPromptTokens: Math.ceil(composeInstructions(freshRecord.kind === "practice" ? "practice" : "teacher").length / 4),
+							systemPromptTokens: Math.ceil(kickInstructions.length / 4),
+							requestOverLimit: antigravityRequestTrigger(kickEngine.model.provider, kickInstructions),
+							summaryRequestFits: antigravitySummaryFit(kickEngine.model.provider),
 						};
 					}, chatId);
 			},

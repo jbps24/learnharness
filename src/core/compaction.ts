@@ -259,6 +259,26 @@ export function compactionCutIndex(messages: readonly LhMessage[], keepRecentTok
 	return cut;
 }
 
+/** Every valid first-kept index after `start`, ascending, under the same rules
+ * as compactionCutIndex: never a tool result (a call keeps its results) and
+ * moved back over adjacent non-context metadata, never across a compaction.
+ * Chunked compaction picks earlier cuts from these. */
+export function compactionCutPoints(messages: readonly LhMessage[], start: number): number[] {
+	const points: number[] = [];
+	for (let i = start + 1; i < messages.length; i++) {
+		const message = cutMessage(messages[i]!);
+		if (!message || !(message.role === "user" || message.role === "assistant" || message.role === "custom")) continue;
+		let cut = i;
+		while (cut > start) {
+			const before = messages[cut - 1]!;
+			if ((before.role === "custom" && before.customType === "compaction") || cutMessage(before)) break;
+			cut--;
+		}
+		if (cut > start && points.at(-1) !== cut) points.push(cut);
+	}
+	return points;
+}
+
 // ─── the marker ──────────────────────────────────────────────────────────────
 
 /** The compaction marker's details (UI payload — never model-visible;

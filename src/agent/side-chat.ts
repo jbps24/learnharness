@@ -72,6 +72,26 @@ function textOf(message: AssistantMessage): string {
 		.join("");
 }
 
+/** The side helper's model-facing messages: the exact list streamSideAnswer
+ * sends, shared with admission checks that must measure the real request. */
+export function sideAnswerMessages(turns: readonly SideModelTurn[], model: PiEngine["model"]): Message[] {
+	const now = Date.now();
+	return turns.map((turn) =>
+		turn.role === "user"
+			? { role: "user", content: turn.text, timestamp: now }
+			: ({
+					role: "assistant",
+					content: [{ type: "text", text: turn.text }],
+					api: model.api,
+					provider: model.provider,
+					model: model.id,
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+					stopReason: "stop",
+					timestamp: now,
+				} as AssistantMessage),
+	);
+}
+
 /**
  * Stream one side answer. `onText` receives the FULL text so far on every
  * text delta (replace, never append — the same slot discipline as the
@@ -88,21 +108,7 @@ export async function streamSideAnswer(opts: {
 	chatId?: string;
 	runId?: string;
 }): Promise<SideAnswerResult> {
-	const now = Date.now();
-	const messages: Message[] = opts.turns.map((turn) =>
-		turn.role === "user"
-			? { role: "user", content: turn.text, timestamp: now }
-			: ({
-					role: "assistant",
-					content: [{ type: "text", text: turn.text }],
-					api: opts.engine.model.api,
-					provider: opts.engine.model.provider,
-					model: opts.engine.model.id,
-					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-					stopReason: "stop",
-					timestamp: now,
-				} as AssistantMessage),
-	);
+	const messages = sideAnswerMessages(opts.turns, opts.engine.model);
 	let text = "";
 	let failure: unknown;
 	const capture = createBackgroundCapture({ role: "sideQuestion", runId: opts.runId ?? randomUUID(), sourceId: opts.chatId });
