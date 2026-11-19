@@ -90,14 +90,15 @@ try {
 buildPluginAuthoring({ root: ROOT, standalone: true });
 
 // 2c) Payload curation (2026-10-11): the trace sweep can copy repo-root
-// plugins/ (authoring sources/tests), dist/ (previous installers), and the development Electron
-// runtime (the demo helper's dev-only require). Neither belongs in the
-// server: packaged helpers use process.execPath, the app's own binary.
+// plugins/ (authoring sources/tests), dist/ (previous installers), tests/
+// (the repo's test suite, ~430 files, traced into every route; 2026-11-19)
+// and the development Electron runtime (the demo helper's dev-only require).
+// None belongs in the server: packaged helpers use process.execPath, the app's own binary.
 // Remove ONLY these standalone-root paths AFTER tracing — excluding a
 // generic dist/** earlier broke pi-ai / pi-agent-core's runtime dist/.
 // Never touch ROOT/dist or ROOT/node_modules/electron (the running app
 // and the build runtime); native canvas/resvg packages stay untouched.
-for (const extra of ["plugins", "dist", path.join("node_modules", "electron")]) {
+for (const extra of ["plugins", "dist", "tests", path.join("node_modules", "electron")]) {
 	const target = path.join(STANDALONE, extra);
 	if (exists(target)) {
 		fs.rmSync(target, { recursive: true, force: true });
