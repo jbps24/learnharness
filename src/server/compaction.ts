@@ -28,7 +28,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { AGY_COMPACT_AT_BYTES, AGY_MAX_INPUT_BYTES, antigravityRequestBytes, projectedAntigravityRequestBytes } from "../agent/antigravity/request.ts";
+import { AGY_COMPACT_AT_BYTES, AGY_MAX_INPUT_BYTES, agyKeepRecentBytes, agyMessageBytes, antigravityRequestBytes, projectedAntigravityRequestBytes } from "../agent/antigravity/request.ts";
 import { ANTIGRAVITY_PROVIDER } from "../core/contracts/antigravity.ts";
 import type { Usage } from "@earendil-works/pi-ai";
 import {
@@ -128,6 +128,10 @@ export interface CompactionDeps {
 	 * the span's summary prompt would not fit, the span is summarized in
 	 * chained chunks: the oldest part that fits first, the rest after it. */
 	summaryRequestFits?: (prompt: string) => boolean;
+	/** A provider byte cap also sizes the kept tail (Antigravity): the cut
+	 * keeps `budget` worth of recent messages measured by `size`, instead of
+	 * KEEP_RECENT_TOKENS, so the compacted request lands under the trigger. */
+	keptTail?: (messages: readonly LhMessage[]) => { budget: number; size: (message: LhMessage) => number };
 	/** Trigger against a prospective request without recording/summarizing
 	 * its new cargo. The cut and summary still use only saved history. */
 	projectMessages?: (record: ChatRecord) => readonly LhMessage[];
@@ -180,6 +184,16 @@ export function antigravityRequestTrigger(provider: string, instructions: string
 		} catch {
 			return false;
 		}
+	};
+}
+
+/** Antigravity's kept tail: sized in replay bytes against the byte trigger,
+ * budgeting for a summary at least as large as the chat's prior one. */
+export function antigravityKeptTail(provider: string, instructions: string): CompactionDeps["keptTail"] {
+	if (provider !== ANTIGRAVITY_PROVIDER) return undefined;
+	return (messages) => {
+		const prior = activeCompactionOf(messages);
+		return { budget: agyKeepRecentBytes(instructions, prior ? Buffer.byteLength(prior.content) : 0), size: agyMessageBytes };
 	};
 }
 
@@ -238,7 +252,8 @@ async function compactPass(deps: CompactionDeps, chatId: string): Promise<"done"
 	const tokensBefore = projectedContextTokens(projected, deps.systemPromptTokens, model);
 	if (tokensBefore <= deps.thresholdTokens && !deps.requestOverLimit?.(projected)) return "done"; // settled beneath while we waited
 
-	const cut = compactionCutIndex(messages, undefined, model);
+	const tail = deps.keptTail?.(messages);
+	const cut = compactionCutIndex(messages, tail?.budget, model, tail?.size);
 	if (cut <= 0 || cut >= messages.length) return "done"; // no history can be dropped
 
 	// The previous compaction's kept boundary (chained compactions

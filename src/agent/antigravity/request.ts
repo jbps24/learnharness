@@ -1,6 +1,9 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message, Tool } from "@earendil-works/pi-ai";
+import { toLlmMessages } from "../../core/native-messages.ts";
+import type { LhMessage } from "../../core/native-messages.ts";
 import { toClaudeInput, type ClaudeInput } from "../claude-code/transcript.ts";
 
 /** agy cuts every input message after exactly this many UTF-8 bytes: it keeps
@@ -40,7 +43,34 @@ export const AGY_COMPACT_AT_BYTES = 160_000;
  * reserves a fixed share for them; the real schemas were ~14 KB in Nov 2026. */
 export const AGY_TOOL_SCHEMA_RESERVE_BYTES = 24 * 1024;
 
+/** The summary size a compaction expects when the chat has no larger prior
+ * one; real agy summaries weighed 11–15 KB in Nov 2026. */
+export const AGY_MIN_SUMMARY_BYTES = 16 * 1024;
+
 const PLACEHOLDER_DIR = join(tmpdir(), "learnharness-agy-XXXXXX");
+
+/** How many bytes of recent history an agy compaction keeps verbatim: half of
+ * what is left under the trigger after the instructions, the tool reserve and
+ * the expected summary (the prior summary's size, at least 16 KB). The other
+ * half is room for the turns after it. A token-sized tail (20k tokens ≈ 84 KB)
+ * left the request over the trigger right after compacting, so every turn
+ * compacted again. */
+export function agyKeepRecentBytes(instructions: string, priorSummaryBytes: number): number {
+	const fixed = antigravityRequestBytes([], instructions) + AGY_TOOL_SCHEMA_RESERVE_BYTES + Math.max(priorSummaryBytes, AGY_MIN_SUMMARY_BYTES);
+	return Math.max(0, Math.floor((AGY_COMPACT_AT_BYTES - fixed) / 2));
+}
+
+const EMPTY_REQUEST_BYTES = antigravityRequestBytes([], "");
+
+/** What one chat record message adds to an agy request, in UTF-8 bytes (its
+ * model-facing projection; a message the CLI cannot take counts its JSON). */
+export function agyMessageBytes(message: LhMessage): number {
+	try {
+		return antigravityRequestBytes(toLlmMessages([message as AgentMessage]), "") - EMPTY_REQUEST_BYTES;
+	} catch {
+		return Buffer.byteLength(JSON.stringify(message));
+	}
+}
 
 /** What the next agy request would weigh: the given instructions, the replayed
  * model-facing conversation (as toLlmMessages projects it) and the tool reserve. */

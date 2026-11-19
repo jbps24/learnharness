@@ -59,7 +59,7 @@ import { persistTurn, triggerExtraction, TurnPersistenceError } from "./turn-ser
 import { hasProbeDone, hasUnresolvedQuestion, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
 import { samePluginQuestionOccurrence } from "../core/plugin-questions.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
-import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight, antigravityRequestTrigger, antigravitySummaryFit } from "./compaction.ts";
+import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight, antigravityRequestTrigger, antigravitySummaryFit, antigravityKeptTail } from "./compaction.ts";
 import { COMPACTION_RESERVE_TOKENS } from "../core/compaction.ts";
 import { catalogContextLimits, refreshConnectionCatalog } from "./model-catalog.ts";
 import { emit } from "../core/events.ts";
@@ -396,6 +396,7 @@ export async function handleChatInput(
 			thresholdTokens,
 			systemPromptTokens,
 			requestOverLimit: antigravityRequestTrigger(conversationEngine.model.provider, instructions),
+			keptTail: antigravityKeptTail(conversationEngine.model.provider, instructions),
 			summaryRequestFits: antigravitySummaryFit(compactionEngine.model.provider),
 			projectMessages: (current) => {
 				try {
@@ -950,6 +951,7 @@ export async function handleChatInput(
 							),
 							systemPromptTokens: Math.ceil(kickInstructions.length / 4),
 							requestOverLimit: antigravityRequestTrigger(kickEngine.model.provider, kickInstructions),
+							keptTail: antigravityKeptTail(kickEngine.model.provider, kickInstructions),
 							summaryRequestFits: antigravitySummaryFit(kickEngine.model.provider),
 						};
 					}, chatId);

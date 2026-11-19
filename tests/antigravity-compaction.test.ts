@@ -14,14 +14,14 @@ const TMP_DATA = fs.mkdtempSync(path.join(os.tmpdir(), "lh-agy-compaction-"));
 process.env.LH_DATA_DIR = TMP_DATA;
 
 const { chatStore } = await import("../src/store/chats.ts");
-const { ensureCompacted, kickCompaction, awaitCompaction, antigravityRequestTrigger, antigravitySummaryFit } = await import("../src/server/compaction.ts");
+const { ensureCompacted, kickCompaction, awaitCompaction, antigravityRequestTrigger, antigravitySummaryFit, antigravityKeptTail } = await import("../src/server/compaction.ts");
 import type { CompactionDeps } from "../src/server/compaction.ts";
-const { activeCompactionOf, newCompactionMarker, newUserMessage, toLlmMessages } = await import("../src/core/index.ts");
+const { activeCompactionOf, compactionCutIndex, newCompactionMarker, newUserMessage, toLlmMessages } = await import("../src/core/index.ts");
 import type { LhMessage } from "../src/core/index.ts";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 const fauxAssistant = (content: Parameters<typeof fauxAssistantMessage>[0]) => fauxAssistantMessage(content, { stopReason: "toolUse" });
-const { AGY_COMPACT_AT_BYTES, AGY_MAX_INPUT_BYTES, AGY_TOOL_SCHEMA_RESERVE_BYTES, antigravityRequestBytes, buildAntigravityPrompt, projectedAntigravityRequestBytes } = await import("../src/agent/antigravity/request.ts");
+const { AGY_COMPACT_AT_BYTES, AGY_MAX_INPUT_BYTES, AGY_MIN_SUMMARY_BYTES, AGY_TOOL_SCHEMA_RESERVE_BYTES, agyKeepRecentBytes, agyMessageBytes, antigravityRequestBytes, buildAntigravityPrompt, projectedAntigravityRequestBytes } = await import("../src/agent/antigravity/request.ts");
 const { toClaudeInput } = await import("../src/agent/claude-code/transcript.ts");
 const { ANTIGRAVITY_PROVIDER } = await import("../src/core/contracts/antigravity.ts");
 
@@ -215,6 +215,66 @@ describe("chunked, chained compaction when the summary request is too large", ()
 		await ensureCompacted(depsOf(() => false, prompts), chatId);
 		assert.equal(prompts.length, 0);
 		assert.equal(activeCompactionOf(chatStore.getChat(chatId)!.messages), null);
+	});
+});
+
+describe("the Antigravity kept tail", () => {
+	/** Real teaching instructions weighed ~40 KB in Nov 2026. */
+	const TEACHING = "i".repeat(40_000);
+	const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+
+	it("applies only to the Antigravity provider", () => {
+		assert.equal(antigravityKeptTail("anthropic", TEACHING), undefined);
+		assert.equal(typeof antigravityKeptTail(ANTIGRAVITY_PROVIDER, TEACHING), "function");
+	});
+
+	it("keeps half of what is left under the trigger after instructions, tool reserve and the expected summary", () => {
+		const fixed = antigravityRequestBytes([], TEACHING) + AGY_TOOL_SCHEMA_RESERVE_BYTES;
+		assert.equal(AGY_MIN_SUMMARY_BYTES, 16 * 1024);
+		assert.equal(agyKeepRecentBytes(TEACHING, 0), Math.floor((AGY_COMPACT_AT_BYTES - fixed - AGY_MIN_SUMMARY_BYTES) / 2), "no prior summary: assume 16 KB");
+		assert.equal(agyKeepRecentBytes(TEACHING, 10_000), agyKeepRecentBytes(TEACHING, 0), "a smaller prior summary still assumes 16 KB");
+		assert.equal(agyKeepRecentBytes(TEACHING, 30_000), Math.floor((AGY_COMPACT_AT_BYTES - fixed - 30_000) / 2), "a larger prior summary is assumed again");
+		assert.equal(agyKeepRecentBytes("i".repeat(200_000), 0), 0, "never negative");
+	});
+
+	it("budgets against the chat's prior summary and measures messages in replay bytes", () => {
+		const kept = newUserMessage("recent");
+		const marker = newCompactionMarker("s".repeat(30_000), { firstKeptMessageId: kept.id, tokensBefore: 1, at: "fixture" });
+		const tail = antigravityKeptTail(ANTIGRAVITY_PROVIDER, TEACHING)!([newUserMessage("old"), kept, marker]);
+		assert.equal(tail.budget, agyKeepRecentBytes(TEACHING, Buffer.byteLength(marker.content as string)));
+		assert.equal(tail.size, agyMessageBytes);
+		assert.ok(agyMessageBytes(newUserMessage("ä".repeat(1_000))) >= 2_000, "two-byte characters count twice");
+	});
+
+	it("lets the cut walk with a custom size", () => {
+		const messages = Array.from({ length: 6 }, (_, i) => newUserMessage(`m${i}`));
+		assert.equal(compactionCutIndex(messages, 12, undefined, () => 4), 3, "three 4-unit messages fill a 12-unit budget");
+	});
+
+	it("a long lesson compacts once and leaves room for the next turns", async () => {
+		const chat = chatStore.createChat("long lesson");
+		chatStore.saveMessages(chat.id, Array.from({ length: 40 }, (_, i) => newUserMessage(`turn ${i} ${"x".repeat(5_000)}`)));
+		let summaries = 0;
+		const deps: CompactionDeps = {
+			chatStore,
+			engine: { model: { provider: ANTIGRAVITY_PROVIDER, id: "test", contextWindow: 1_000_000 } } as never,
+			modelId: `${ANTIGRAVITY_PROVIDER}:test`,
+			kind: "teach",
+			thresholdTokens: 10_000_000,
+			systemPromptTokens: Math.ceil(TEACHING.length / 4),
+			requestOverLimit: antigravityRequestTrigger(ANTIGRAVITY_PROVIDER, TEACHING),
+			keptTail: antigravityKeptTail(ANTIGRAVITY_PROVIDER, TEACHING),
+			summarize: async () => { summaries++; return { summary: "s".repeat(15_000), usage }; },
+		};
+		await ensureCompacted(deps, chat.id);
+		assert.equal(summaries, 1);
+		const bytes = projectedAntigravityRequestBytes(llm(chatStore.getChat(chat.id)!.messages), TEACHING);
+		assert.ok(bytes <= AGY_COMPACT_AT_BYTES - 30_000, `the compacted request leaves room for more turns (${bytes} bytes)`);
+		for (let i = 0; i < 3; i++) {
+			chatStore.saveMessages(chat.id, [...chatStore.getChat(chat.id)!.messages, newUserMessage(`next ${i} ${"x".repeat(5_000)}`)]);
+			await ensureCompacted(deps, chat.id);
+		}
+		assert.equal(summaries, 1, "the next turns do not compact again");
 	});
 });
 

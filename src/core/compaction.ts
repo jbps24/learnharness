@@ -227,7 +227,14 @@ function cutMessage(message: LhMessage): LhMessage | null {
  * Returns the first kept record index; a zero/no-progress cut drops nothing.
  * Keep this and estimateMessageTokens aligned deliberately when upgrading Pi.
  */
-export function compactionCutIndex(messages: readonly LhMessage[], keepRecentTokens = KEEP_RECENT_TOKENS, model?: Model<Api>): number {
+export function compactionCutIndex(
+	messages: readonly LhMessage[],
+	keepRecentTokens = KEEP_RECENT_TOKENS,
+	model?: Model<Api>,
+	/** A provider-specific size (Antigravity: replay bytes); the budget is then
+	 * in the same unit. Default: the token estimate. */
+	size?: (message: LhMessage) => number,
+): number {
 	const previous = activeCompactionOf(messages);
 	const previousKept = previous ? keptIndexFor(messages, previous) : -1;
 	const start = Math.max(0, previousKept);
@@ -241,7 +248,7 @@ export function compactionCutIndex(messages: readonly LhMessage[], keepRecentTok
 	let accumulated = 0;
 	for (let i = messages.length - 1; i >= start; i--) {
 		const message = cutMessage(messages[i]!);
-		const tokens = message ? estimateMessageTokens(message, model) : 0;
+		const tokens = message ? (size ? size(message) : estimateMessageTokens(message, model)) : 0;
 		if (tokens === 0) continue;
 		accumulated += tokens;
 		if (accumulated >= keepRecentTokens) {
