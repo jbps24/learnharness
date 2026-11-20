@@ -102,14 +102,49 @@ test("a real Pi agent executes harness tools and replays tool results to the nex
 
 test("invalid tool names and missing structured output fail without executing tools", async () => {
 	assert.throws(() => parseActions({ text: "", toolCalls: [{ name: "bash", arguments: {} }] }, [tool]), /undeclared/);
-	for (const payload of [undefined, { text: "", toolCalls: [{ name: "bash", arguments: {} }] }]) {
+	for (const [payload, attempts] of [[undefined, 2], [{ text: "", toolCalls: [{ name: "bash", arguments: {} }] }, 1]] as const) {
 		const { run, calls } = fakeRun(success(payload));
 		const stream = createAntigravityStream(run, () => "/fake/agy")(model, context);
 		assert.equal((await stream.result()).stopReason, "error");
 		// Consume through cleanup, which follows the terminal event.
 		for await (const _event of stream) { /* drain */ }
+		assert.equal(calls.length, attempts);
 		assert.equal(existsSync(calls[0]!.cwd), false);
 	}
+});
+
+// Gemini sometimes writes its answer as prose and never calls agy's finish
+// tool; agy then reports SUCCESS without structured output (seen Nov 2026 when
+// the prose ran into the print timeout). A second attempt usually answers.
+test("a successful run without structured output is retried once with the same request", async () => {
+	let index = 0;
+	const responses = [fakeRun(success(undefined)), fakeRun(success({ text: "Second try", toolCalls: [] }))];
+	const run: RunAntigravity = (...args) => responses[index++]!.run(...args);
+	const result = await createAntigravityStream(run, () => "/fake/agy")(model, context).result();
+	assert.equal(index, 2);
+	assert.equal(result.stopReason, "stop");
+	assert.deepEqual(result.content, [{ type: "text", text: "Second try" }]);
+	assert.equal(responses[1]!.calls[0]!.prompt, responses[0]!.calls[0]!.prompt);
+	assert.deepEqual(responses[1]!.calls[0]!.args, responses[0]!.calls[0]!.args);
+	assert.equal(result.usage.output, 20);
+});
+
+test("a second run without structured output ends the turn with a specific error", async () => {
+	const { run, calls } = fakeRun(success(undefined));
+	const stream = createAntigravityStream(run, () => "/fake/agy")(model, context);
+	const result = await stream.result();
+	for await (const _event of stream) { /* drain */ }
+	assert.equal(calls.length, 2);
+	assert.equal(result.stopReason, "error");
+	assert.equal(result.errorMessage, "The Antigravity model did not finish its answer (twice). Try again or choose another model.");
+	assert.equal(existsSync(calls[0]!.cwd), false);
+});
+
+test("failed runs are not retried", async () => {
+	const { run, calls } = fakeRun({ status: "ERROR", error: "quota exhausted" }, 1);
+	const result = await createAntigravityStream(run, () => "/fake/agy")(model, context).result();
+	assert.equal(result.errorMessage, "quota exhausted");
+	assert.equal(calls.length, 1);
 });
 
 test("CLI authentication errors remain errors, including nonzero exits", async () => {

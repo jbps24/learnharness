@@ -44,7 +44,10 @@ export function parseActions(value: unknown, tools: Tool[]): { text: string; too
 	return { text: raw.text, toolCalls };
 }
 
-export type RunAntigravity = (binary: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
+/** The turn's error when agy returned no answer on the retry either. */
+export const ANTIGRAVITY_NO_ANSWER = "The Antigravity model did not finish its answer (twice). Try again or choose another model.";
+
+export type RunAntigravity =(binary: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
 
 export function createAntigravityStream(run: RunAntigravity = (binary, args, options) => spawn(binary, args, { ...options, stdio: "pipe" }), findBinary = getAntigravityBinary): StreamFunction<Api, SimpleStreamOptions> {
 	return (model, context, options = {}) => {
@@ -94,10 +97,10 @@ export function createAntigravityStream(run: RunAntigravity = (binary, args, opt
 				const env = externalCliEnv();
 				// Use the CLI's saved account; never select API-key/ADC auth from the app environment.
 				for (const name of ["GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_ADC_AUTH", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_APPLICATION_CREDENTIALS"]) delete env[name];
-				child = run(binary, args, { cwd, env });
 				options.signal?.addEventListener("abort", abort, { once: true });
 				stream.push({ type: "start", partial: message });
-				const envelope = await new Promise<Record<string, unknown>>((resolve, reject) => {
+				const attempt = () => new Promise<Record<string, unknown>>((resolve, reject) => {
+					child = run(binary, args, { cwd: workdir, env });
 					let stdout = "", stderr = "";
 					child!.stdout.setEncoding("utf8").on("data", (chunk: string) => {
 						stdout += chunk;
@@ -117,6 +120,16 @@ export function createAntigravityStream(run: RunAntigravity = (binary, args, opt
 					});
 					child!.stdin.end(JSON.stringify({ event: "user", message: { content: prompt } }) + "\n");
 				});
+				let envelope = await attempt();
+				// Gemini sometimes writes its answer as prose and never calls agy's
+				// finish tool (worst when the prose runs into the print timeout); agy
+				// still reports SUCCESS, just without structured output. A second
+				// attempt with the same request usually answers.
+				if (envelope.structured_output == null) {
+					if (options.signal?.aborted) throw new Error("Request was aborted");
+					envelope = await attempt();
+					if (envelope.structured_output == null) throw new Error(ANTIGRAVITY_NO_ANSWER);
+				}
 				const actions = parseActions(envelope.structured_output, input.tools);
 				const usage = envelope.usage as Record<string, number> | undefined;
 				const count = (key: string) => Math.max(0, Number.isFinite(usage?.[key]) ? usage![key]! : 0);
