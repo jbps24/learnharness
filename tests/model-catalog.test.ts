@@ -31,6 +31,7 @@ const { readSettings, writeSettings } = await import("../src/store/settings.ts")
 const { SETTINGS_FILE } = await import("../config.ts");
 const { effectiveSettings } = await import("../src/server/stores.ts");
 const { providerKeyPresent } = await import("../src/server/keys.ts");
+const { setIsExecutableForTest } = await import("../src/agent/claude-code/binary.ts");
 
 // The model-control wave (2026-09-12): pi-ai owns the registry — these pins
 // hold our projection + validation honest against the shipped catalog, and
@@ -343,18 +344,27 @@ describe("pi thinking truth (pinned against pi-ai upgrades)", () => {
  *  finds a claude binary when installed is true. */
 function withClaudeInstalled(installed: boolean, fn: () => void, enabled = true): void {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-catalog-"));
-	const saved = { PATH: process.env.PATH, HOME: process.env.HOME, npm_config_prefix: process.env.npm_config_prefix };
+	const saved = {
+		PATH: process.env.PATH,
+		HOME: process.env.HOME,
+		USER: process.env.USER,
+		npm_config_prefix: process.env.npm_config_prefix,
+	};
 	const settings = readSettings();
 	writeSettings({ ...(settings ?? { version: 1 }), claudeCode: { enabled } });
 
-	if (installed) fs.writeFileSync(path.join(dir, "claude"), "#!/bin/sh\n", { mode: 0o755 });
+	const fakeBin = path.resolve(dir, "claude");
+	if (installed) fs.writeFileSync(fakeBin, "#!/bin/sh\n", { mode: 0o755 });
 	process.env.PATH = dir;
 	process.env.HOME = dir;
+	delete process.env.USER;
 	delete process.env.npm_config_prefix;
+	setIsExecutableForTest(installed ? (candidate) => candidate === fakeBin : () => false);
 
 	try {
 		fn();
 	} finally {
+		setIsExecutableForTest(null);
 		for (const [name, value] of Object.entries(saved)) {
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;

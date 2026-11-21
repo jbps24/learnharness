@@ -86,11 +86,18 @@ function isExecutableFile(filePath: string): boolean {
 	}
 }
 
+let isExecutableOverride: ((filePath: string) => boolean) | null = null;
+
+/** Test-only override for executable checks inside getClaudeBinary(). */
+export function setIsExecutableForTest(fn: ((filePath: string) => boolean) | null): void {
+	isExecutableOverride = fn;
+}
+
 export function getClaudeBinary(): string | null {
 	return resolveClaudeBinary({
 		env: process.env,
 		platform: process.platform,
 		homeDir: os.homedir(),
-		isExecutable: isExecutableFile,
+		isExecutable: isExecutableOverride ?? isExecutableFile,
 	});
 }
