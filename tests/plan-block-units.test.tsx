@@ -4,7 +4,8 @@ import { InteractionLayersProvider } from "../components/interaction-layers.tsx"
 const renderToStaticMarkup = (node: ReactNode) => renderMarkup(<InteractionLayersProvider>{node}</InteractionLayersProvider>);
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { PlanBlock, PlanPopup, blockLayout, type PopupMessage } from "../components/plan-block.tsx";
+import { PlanBlock, PlanPopup, type PopupMessage } from "../components/plan-block.tsx";
+import { blockLayout, chartMeasure } from "../components/plan-layout.ts";
 import {
 	LESSON_RECORD_HEADER,
 	type LhMarkerMessage,
@@ -72,9 +73,9 @@ function clusterBoxes(html: string): ClusterBox[] {
 describe("plan block units", () => {
 	// plan 001 part 8: no units -> today's layout, unchanged
 	it("produces an identical layout when units are omitted, undefined, or empty", () => {
-		const baseline = blockLayout(UNIT_TREE.nodes, UNIT_TREE.edges);
-		const withUndefined = blockLayout(UNIT_TREE.nodes, UNIT_TREE.edges, undefined);
-		const withEmpty = blockLayout(UNIT_TREE.nodes, UNIT_TREE.edges, []);
+		const baseline = blockLayout(UNIT_TREE.nodes, UNIT_TREE.edges, chartMeasure);
+		const withUndefined = blockLayout(UNIT_TREE.nodes, UNIT_TREE.edges, chartMeasure, undefined);
+		const withEmpty = blockLayout(UNIT_TREE.nodes, UNIT_TREE.edges, chartMeasure, []);
 		for (const other of [withUndefined, withEmpty]) {
 			assert.deepEqual(other.x, baseline.x);
 			assert.deepEqual(other.y, baseline.y);
@@ -107,7 +108,7 @@ describe("plan block units", () => {
 
 	// plan 001 part 8: one cluster per unit containing exactly its nodes
 	it("each unit cluster box contains exactly its own nodes", () => {
-		const layout = blockLayout(UNIT_TREE.nodes, UNIT_TREE.edges, UNIT_TREE.units);
+		const layout = blockLayout(UNIT_TREE.nodes, UNIT_TREE.edges, chartMeasure, UNIT_TREE.units);
 		const data: PlanBlockData = {
 			kind: "full",
 			at: "2026-11-20T00:00:00.000Z",
