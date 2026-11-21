@@ -32,7 +32,7 @@ export interface ServerEvents {
 	/** Context compaction started or finished for this chat. While running is
 	 * true, the server gates model interaction and the client disables related
 	 * composer/dock submission. This is live state, not a persisted marker. */
-	"compaction-changed": { chatId: string; running: boolean };
+	"compaction-changed": { chatId: string; running: boolean; unit?: number };
 	/** A side conversation changed. Notify-then-fetch: open views refetch
 	 *  GET /api/chats/:id/side-chats. Closing never deletes it. */
 	"side-chats-changed": { chatId: string };

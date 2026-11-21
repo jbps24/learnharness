@@ -1,11 +1,11 @@
 # 001 — Unit cuts: teach a lesson in units with a durable lesson record
 
-Status: **draft, awaiting owner approval** (no part started).
+Status: **approved** 2026-11-20 (spec-level choices 1–7 confirmed as written; all DRAFT texts in Parts 1–7 confirmed the same day; Part 7 gained the prompt pronoun sweep).
 
 ## Starting a session on this plan
 
 1. Until this line says **approved**, do not run any part. Walk the owner through "Spec-level choices for owner review" and every **DRAFT** text in the part about to run, one question at a time (AGENTS.md "No guessing"). Write the answers into this file, then mark it approved.
-2. Run parts through the ladder (`execute-plan` skill): `ladder queue --plan plans/001-unit-cuts.md --step "Part 1" …`. `.ladder.toml` is filled in; show it to the owner once before the first chunk. Parts 7 and 9 take `--no-tests-first`.
+2. Run parts through the ladder (`execute-plan` skill): `ladder queue --plan plans/001-unit-cuts.md --step "Part 1" …`. `.ladder.toml` is filled in; show it to the owner once before the first chunk. Part 9 takes `--no-tests-first`.
 3. After each green part, update "Status per part" below. Never re-open the decisions the tickets hold.
 
 ## What this builds
@@ -30,12 +30,12 @@ Out of scope: practice sessions; per-unit source scoping; trimming tool output; 
 - Tests are new files under `tests/` (flat, `*.test.ts` / `*.test.tsx`, run by `npm test` = `NODE_ENV=test tsx --test tests/*.test.ts tests/*.test.tsx`). **Do not reuse or edit existing test fixtures or helpers**; write new helpers inside the new test files. Existing tests must keep passing unchanged, except where a part names a test it updates.
 - Gates: `npm run typecheck`, `npm run lint`, `npm test`.
 - Pure logic lives in `src/core/` (no server imports); server wiring in `src/server/`; agent tools in `src/agent/`.
-- Every agent-facing error message is exact text from this plan (drafts are marked **DRAFT**; the owner may edit them before the part runs).
+- Every agent-facing error message is exact text from this plan (all confirmed by the owner).
 - Line numbers below were read on `feat/antigravity-cli` @ 0af4fb2; re-locate by symbol name if they moved.
 
 ## Spec-level choices for owner review
 
-The map settled the design. These smaller choices were made while writing the spec and need your yes before Part 1 runs:
+The map settled the design. These smaller choices were made while writing the spec. The owner confirmed all seven as written on 2026-11-20:
 
 1. `%% source:` outside a unit, or twice inside one unit, is a parse problem (not silently ignored).
 2. A unit cut may finish several units at once. This only happens for converted lessons, where the current unit can already be unit 3.
@@ -103,8 +103,8 @@ export interface PlanTree { nodes: PlanNode[]; edges: PlanEdge[]; units?: PlanUn
 **plan_init.**
 - Passes `parsed.plan.units` to `createTree` and saves the tree as today.
 - The result text adds `unitIds` (ordered) when units exist: `{"ok":true,"nodeIds":[…],"unitIds":[…],"reminder":…}`. `details.tree` carries units.
-- Tool description and the `mermaid` parameter description, **DRAFT**:
-  > Group nodes into ordered units with flat mermaid subgraphs: `subgraph slug[Unit Title]` … `end`, one coherent topic each, optional `%% source: <where in his material>` inside. Every node in exactly one unit; a prerequisite never sits in a later unit. A plan without subgraphs is one unit.
+- Tool description and the `mermaid` parameter description (confirmed by the owner):
+  > Group nodes into ordered units with flat mermaid subgraphs: `subgraph slug[Unit Title]` … `end`, one coherent topic each, optional `%% source: <where in the learner's material>` inside. Every node in exactly one unit; a prerequisite never sits in a later unit. A plan without subgraphs is one unit.
 
   Replace "no subgraphs, styles, or classes" with "no styles or classes".
 
@@ -127,6 +127,14 @@ graph TD
 - `graph TD\n a --> b\n subgraph u1[U]\n c\n end` → "nodes outside any unit: a, b".
 - `graph TD\n a --> b` → ok with `units` absent.
 - Edge cases to test: nested subgraph; stray `end`; unclosed unit; unit id `Basics` (slug); unit id equal to a node id; empty unit; two `%% source:` in one unit; `%% source:` at top level; a node labelled in two units; a node first mentioned as an edge endpoint inside unit 2 that already got its membership in unit 1 (stays in unit 1, no problem).
+
+**Result (green 2026-11-20, run 20261120-204304-001-part-1).** Edge cases the spec left open, settled by the owner as built:
+- The "unit id is also a node id" problem carries the `line N:` prefix of its subgraph line.
+- A node id `end` is read as the closing keyword; `subgraph <id>` without a title is the "needs a title" problem.
+- An unreadable `subgraph` line is a generic "can't read the unit" problem and still opens a unit, so later `end` lines pair up.
+- A labelled node line outside any unit, for a node already in a unit, is no problem (the two-units rule covers different units only).
+- A nested `subgraph` line is a problem and is skipped; the next `end` closes the outer unit, a second `end` is a stray `end`.
+- The generated plugin API reference (`docs/plugin-api/`) now includes `PlanTree.units` and `PlanUnit`.
 
 ---
 
@@ -173,8 +181,8 @@ export interface LessonRecordDetails {
 2. No units in the tree → `null` (no unit rules apply).
 3. Let `cur = currentUnitIndex`, `target = unitIndexOf(nodeId)`.
    - `target <= cur` → `null` (current unit, or a revisit).
-   - `target >= cur + 2` → **DRAFT** `nodeId "<id>" is in unit "<target title>", but the next unit is "<cur+1 title>". Units are taught in order — to skip "<cur+1 title>", rewrite the plan with plan_init first (reorder or remove it).`
-   - `target === cur + 1` and any job of this chat is undelivered (`status === "running"` or `delivery?.status === "pending"`, via `jobStore.listJobs(chatId)`) → **DRAFT** `A background job (<kind>) from the current unit has not delivered yet — it still belongs to unit "<cur title>". Tell the learner it belongs to this unit and that you will wait for it; move on to "<target title>" once it has arrived.`
+   - `target >= cur + 2` → `nodeId "<id>" is in unit "<target title>", but the next unit is "<cur+1 title>". Units are taught in order — to skip "<cur+1 title>", rewrite the plan with plan_init first (reorder or remove it).`
+   - `target === cur + 1` and any job of this chat is undelivered (`status === "running"` or `delivery?.status === "pending"`, via `jobStore.listJobs(chatId)`) → `A background job (<kind>) from the current unit has not delivered yet — it still belongs to unit "<cur title>". Tell the learner it belongs to this unit and that you will wait for it; move on to "<target title>" once it has arrived.`
 4. Otherwise `null`.
 
 The quiz/explain tool ctx becomes `Pick<TeacherToolContext, "chatId" | "chatStore" | "jobStore">`. `jobStore` is already on `TeacherToolContext`.
@@ -184,11 +192,11 @@ Questions end the turn (`makeQuestionStopper`), so at most one tag lands per tur
 **Rewrite guards in `plan_init`.** These run after parsing and `createTree`, before saving, against the previous tree and the live transcript.
 
 - Let `finished = finishedUnitIds(messages)` and `oldCur = currentUnitIndex(oldTree, messages)`.
-- **Frozen units.** When `finished.length > 0`, the new tree's first `finished.length` units must have the same ids in the same order, and each must have exactly the same `nodeIds` set as in the old tree. Violation → **DRAFT** `unit "<id>" is finished (the lesson has moved past it) — finished units keep their id, order and nodes. Change only the current and later units.`
+- **Frozen units.** When `finished.length > 0`, the new tree's first `finished.length` units must have the same ids in the same order, and each must have exactly the same `nodeIds` set as in the old tree. Violation → `unit "<id>" is finished (the lesson has moved past it) — finished units keep their id, order and nodes. Change only the current and later units.`
 - **Taught nodes stay at or before the current unit.** This applies to every rewrite, including the first grouping of a unit-less plan.
   - Let `latest` be the most recent teach tag whose node exists in the new tree. If there is none, the guard passes.
   - `limit = unitIndexOf(newTree, latest.nodeId)`. Every node id with any teach tag that exists in the new tree must have `unitIndexOf <= limit`.
-  - Violation → **DRAFT** `node "<id>" has already been taught but would sit in unit "<u>", after the current unit "<limit title>". Keep taught nodes in the current unit or earlier.`
+  - Violation → `node "<id>" has already been taught but would sit in unit "<u>", after the current unit "<limit title>". Keep taught nodes in the current unit or earlier.`
 - A new tree without units, when the old tree had units and `finished.length > 0` → the frozen-units problem.
 
 **Edge cases to test.**
@@ -222,7 +230,7 @@ export interface LessonJudgment {
 export const LESSON_RECORD_CAPS = { learned: 400, errorsCorrected: 300, openPoints: 300, learnerWide: 1500, commitments: 600 } as const;
 export const CHECK_STEM_CLIP = 120;     // characters, then "…"
 export const EXPLAIN_ANSWER_CLIP = 160; // characters, then "…"
-export const LESSON_RECORD_HEADER = "[LESSON RECORD] The lesson before this point was taught in earlier units; this record replaces that transcript. Its progress facts are computed by the app and are authoritative. Everything after this message is the verbatim transcript of the current unit."; // DRAFT
+export const LESSON_RECORD_HEADER = "[LESSON RECORD] The lesson before this point was taught in earlier units; this record replaces that transcript. Its progress facts are computed by the app and are authoritative. Everything after this message is the verbatim transcript of the current unit.";
 ```
 
 **Check lines** (`checkLines(messages): Map<nodeId, string[]>`): one line per **answered** built-in teach `quiz`/`explain` call with a `nodeId`, in transcript order. "Answered" means a matching `toolResult` exists, is not `isError`, and has object `details` (`QuestionAnswerData`). A line is `<role> — "<stem>" — <outcome>`:
@@ -246,17 +254,17 @@ Plugin questions produce no line (spec choice 4).
 - **Probe assessment**: from the first successful `probe_done` (`probeDoneResultIds` + `parseProbeDoneInput`), as `- <strand>: <assessment>` per strand, plus `Summary: <summary>` if present. Omitted when absent.
 - **Current position**: `Current unit: Unit <n> · <title>`, plus `current node: <title> (<id>)` when one exists.
 
-**Summarizer prompt** (`buildLessonRecordPrompt(input)`), **DRAFT** wording:
+**Summarizer prompt** (`buildLessonRecordPrompt(input)`), wording (confirmed by the owner):
 
 > You are writing the judgment part of a lesson record: the notes your future self will teach from INSTEAD of the transcript below, which is being cut away. Progress facts (plan, statuses, check outcomes) are computed separately and are not your job — never state what was taught or how far the lesson got.
 >
-> Write about the learner, from the transcript only. Every claim must be traceable to what he said or answered.
+> Write about the learner, from the transcript only. Every claim must be traceable to what the learner said or answered.
 >
 > Return ONE JSON object and nothing else:
 > {"learnerWide": string, "commitments": string, "nodes": [{"nodeId": string, "learned": string, "errorsCorrected": string, "openPoints": string}]}
 >
-> - nodes: exactly one entry for each of these node ids, which were taught in this stretch: <ids>. No other ids. `learned` (≤400 chars, required): what he now understands and how he showed it. `errorsCorrected` (≤300, "" if none): misconceptions that surfaced and were corrected. `openPoints` (≤300, "" if none): what is still shaky or unresolved. Where a previous entry exists (below), rewrite it to include what this stretch changed.
-> - learnerWide (≤1,500 chars): only what shows across nodes — his stated or observed preferences (pace, formality, examples vs derivations), recurring misconceptions or reasoning habits, how his goal has evolved. Do not restate the probe assessment. Rewrite the previous text (below) to include this stretch.
+> - nodes: exactly one entry for each of these node ids, which were taught in this stretch: <ids>. No other ids. `learned` (≤400 chars, required): what the learner now understands and how they showed it. `errorsCorrected` (≤300, "" if none): misconceptions that surfaced and were corrected. `openPoints` (≤300, "" if none): what is still shaky or unresolved. Where a previous entry exists (below), rewrite it to include what this stretch changed.
+> - learnerWide (≤1,500 chars): only what shows across nodes — their stated or observed preferences (pace, formality, examples vs derivations), recurring misconceptions or reasoning habits, how their goal has evolved. Do not restate the probe assessment. Rewrite the previous text (below) to include this stretch.
 > - commitments (≤600 chars, "" if none): promises the tutor made that are still owed (e.g. "come back to the Bode plot after unit 3"), each naming its node id when it has one. Keep earlier commitments still owed; drop those fulfilled.
 
 The prompt is followed by: the computed facts text; the previous judgment (`learnerWide`, `commitments`, and the previous entries for the listed ids); then `TRANSCRIPT:` and the span text from `serializeForSummary`.
@@ -300,6 +308,11 @@ Open points: …                           (line omitted when "")
 - `mergeJudgment` keeps an untouched entry byte-for-byte and keeps an orphan id.
 - Rendering omits empty sections and lines.
 
+**Result (green 2026-11-20, run 20261120-215245-001-part-3).** Owner decisions 2026-11-21:
+- Validation texts beyond the list above, accepted as built: `the top level must be a JSON object`; `learnerWide must be a string`; `commitments must be a string`; `nodes must be an array`; `each node entry must be an object with a string nodeId`; `<field> of "<id>" must be a string`; `learned of "<id>" is empty`.
+- **Fix (applied, green 2026-11-21, run 20261121-085311-001-part-3):** "Taught, no longer in the plan" must also list removed nodes that have a judgment entry but no check lines, as `- (<id>)`. `recordFacts` therefore also receives the merged judgment's node ids. The judgment text itself still renders only under "The learner, per node" (orphans after plan nodes), not duplicated.
+- Out of scope, kept as a separate commit: the test-isolation fix in `tests/model-catalog.test.ts` + `setIsExecutableForTest` in `src/agent/claude-code/binary.ts` (two tests already failed on a clean HEAD on a machine with the `claude` CLI installed).
+
 ---
 
 ## Part 4 — Two cut kinds: projection, accounting and compaction scope
@@ -331,7 +344,7 @@ Open points: …                           (line omitted when "")
    - the compaction span starts at `max(r, previous compaction kept index if that index >= r)`;
    - a previous compaction summary is passed as `priorSummary` only when its kept index `>= r`;
    - cut candidates are `> r`; if none exists, compaction does nothing.
-4. **Compaction prompt after a record** (`afterRecord: true`): omit the "plan dependency tree" section entirely, and scope the remaining three sections to "the current unit". **DRAFT** section intros: "## The learner's understanding (this unit)", "## The teaching arc (this unit)", "## The current moment". Before any record (`afterRecord: false`) the prompt is unchanged byte-for-byte.
+4. **Compaction prompt after a record** (`afterRecord: true`): omit the "plan dependency tree" section entirely, and scope the remaining three sections to "the current unit". Section intros (confirmed): "## The learner's understanding (this unit)", "## The teaching arc (this unit)", "## The current moment". Before any record (`afterRecord: false`) the prompt is unchanged byte-for-byte.
 5. **Side helper.** The lesson document starts at the newest cut of either kind (the later kept index of `R` and `C`), with the same "Earlier history is omitted…" block. The record content is never included.
 
 **Tests.**
@@ -340,6 +353,10 @@ Open points: …                           (line omitted when "")
 - `compactionCutIndex` never returns an index `<= r`.
 - `buildCompactionPrompt({afterRecord:false})` still contains `## The plan dependency tree` and the plan text. `afterRecord:true` contains neither, and contains `(this unit)`. Existing compaction tests pass unchanged.
 - The side lesson document after a record starts at `r`.
+
+**Result (green 2026-11-20, run 20261120-222200-001-part-4).** Owner decisions 2026-11-21:
+- The after-record compaction prompt is accepted as built (today's prompt scoped to the current unit, opening with "You are compacting the earlier part of the CURRENT UNIT of a tutoring session …" and the sentence "The lesson record, which carries the plan and the earlier units, is kept separately and is not yours to restate."), with one **Fix (applied, green 2026-11-21, run 20261121-084337-001-part-4):** the after-record variant drops "Include probe-phase findings if present." from "## The teaching arc (this unit)". The `afterRecord: false` prompt stays byte-for-byte unchanged.
+- `afterRecord` is optional (absent = false); lesson-record markers are stripped from the compaction span. Accepted.
 
 ---
 
@@ -364,7 +381,7 @@ Open points: …                           (line omitted when "")
    - raw `serializeForSummary(span minus compaction/lesson-record/units-note markers)`;
    - if it doesn't fit (spec choice 3), use the newest compaction marker inside the span with kept index `c` (`s < c < k`): its summary + `serializeForSummary(messages[c, k))`;
    - if neither fits, log `unit cut skipped — the finished unit does not fit one summary request` → `"failed"`.
-6. Call the summarizer (`deps.summarize ?? subagentSummarizer`, the session's engine) and parse with `parseLessonJudgment`. On problems, call once more with the prompt plus **DRAFT** `\n\nYour previous answer was rejected:\n- <problem>\n…\nReturn the corrected JSON object only.` Still invalid, or a throw → log and return `"failed"` (record untouched).
+6. Call the summarizer (`deps.summarize ?? subagentSummarizer`, the session's engine) and parse with `parseLessonJudgment`. On problems, call once more with the prompt plus `\n\nYour previous answer was rejected:\n- <problem>\n…\nReturn the corrected JSON object only.` Still invalid, or a throw → log and return `"failed"` (record untouched).
 7. Build `judgment = mergeJudgment(previousRecord?.details.judgment ?? empty, parsed)`, facts and content.
 8. Re-read the record. Insert the marker at the old end index, the same seam as `compactPass` (#518), with `details = { firstKeptMessageId, finishedUnitIds: finished, currentUnitId, judgment, model, tokensBefore, at }`.
 9. Record usage with `appendTurnUsage` keyed to the marker id, as compaction does. Emit `record-changed`.
@@ -380,6 +397,13 @@ Open points: …                           (line omitted when "")
 - A raw span too large for an injected `summaryRequestFits` → the compaction-summary fallback is used.
 - Not due → no summarizer call.
 - The running event carries `unit`.
+
+**Result (built 2026-11-20).** Edge cases the spec left open, done as the closest faithful reading:
+- `chat-handler.ts` and `app/api/chats/route.ts` needed no change: both call sites already build `CompactionDeps`, and `maintain` runs inside the registry behind them.
+- The facts are computed from the whole record at the first read; the prompt's compaction-fallback tail drops compaction/lesson-record/units-note markers like the raw span.
+- A cut that needed the retry records one usage step per summarizer call under the marker id; a failed cut records none (as compaction).
+
+**Result (green 2026-11-20, run 20261120-225300-001-part-5).** Owner decision 2026-11-21, **Fix (applied, green 2026-11-21, run 20261121-090355-001-part-5):** the marker's `tokensBefore` is computed with `projectedContextTokens` over the projected messages, exactly as `compactPass` does, not with a local `estimateTokens` sum.
 
 ---
 
@@ -398,33 +422,38 @@ Open points: …                           (line omitted when "")
 - `src/core/view.ts` (`projectMarker`, ~l.410): a `units-note` marker renders nothing.
 - New tests: `tests/units-note.test.ts`.
 
-**Note text, DRAFT** (it arrives on the user-role wire, so it uses the bracket convention like `[Session context]`):
+**Note text** (confirmed) (it arrives on the user-role wire, so it uses the bracket convention like `[Session context]`):
 
 > [Session note] This lesson's plan has no units yet. If it spans more than one topic, re-call plan_init now with the same nodes grouped into ordered units (`subgraph slug[Title]` … `end`, optional `%% source:` line). Already-taught nodes must sit in the current unit or earlier. A single-topic plan may stay as it is. Then continue teaching where you left off; don't present the plan again.
 
 **Tests.** The note is appended exactly once across two turns; not for a lesson with units, a lesson without a plan, or before `probe_done`; the view renders nothing for it; `toLlmMessages` carries it as a user message.
 
+**Result (green 2026-11-20, run 20261120-232234-001-part-6).** "Kind is teach" is `record.kind !== "practice"`; every non-retry input with appends (answers, plugin answers, steers included) can carry the note. On a subscription provider's staged automatic turn the note rides in the staged batch: saved by `commitStaged` when admitted, dropped and re-added on the next eligible turn when deferred (traced 2026-11-21).
+
 ---
 
 ## Part 7 — Teacher doctrine (prompts)
 
-**Goal.** The teacher plans units, presents them, moves between them, and waits for jobs. Run with `--no-tests-first` if the ladder can't test prose; the one test below is enough.
+**Goal.** The teacher plans units, presents them, moves between them, and waits for jobs. Also: every learner-referring pronoun in the agent prompts becomes neutral (owner decision 2026-11-20).
 
 **Files.**
 - `src/agent/prompts/teacher/10-planning.md`.
 - `src/agent/prompts/teacher/40-jobs.md`.
-- New test: `tests/prompt-units-doctrine.test.ts` asserts that `composeInstructions("teacher")` contains `subgraph`, `%% source:` and `unit`, and that the prober prompt does not mention units.
+- Every file under `src/agent/prompts/` that uses he/him/his/himself (today: `teacher/05-method.md`, `teacher/10-planning.md`, `teacher/20-teaching.md`, `teacher/28-predictions.md`, `teacher/30-question-principles.md`, `teacher/40-jobs.md`, `shared/10-voice.md`, `shared/15-accuracy.md`, `shared/16-mental-model.md`, `shared/20-question-tools.md`, `shared/25-confidence.md`, `shared/30-learner-files.md`, `shared/40-formatting.md`, `prober/10-probe-doctrine.md`, `practice/00-base.md`; re-locate with `grep -rlwiE 'he|him|his|himself' src/agent/prompts`).
+- New test: `tests/prompt-units-doctrine.test.ts` asserts that `composeInstructions("teacher")` contains `subgraph`, `%% source:` and `unit`, and that the prober prompt does not mention units. It also asserts that `composeInstructions(k)` for `k` in `prober`, `teacher`, `practice`, and the raw text of every `.md` file under `src/agent/prompts/` (this covers side-chat), match no whole-word `/\b(he|him|his|himself)\b/i`.
 
-**DRAFT additions** (owner edits wording before this part runs):
+**Pronoun sweep.** Every he/him/his/himself under `src/agent/prompts/` that refers to the learner becomes the learner / they / them / their / themselves, headings included, with the meaning unchanged (e.g. "## The map moves with him" → "## The map moves with the learner", "## 1. Read his persistent map" → "## 1. Read their persistent map", "## Formatting — he receives documents, not chat messages" → "## Formatting — the learner receives documents, not chat messages"). A use that does not refer to the learner is reworded without those words. Prompt override files in user config are out of scope.
+
+**Additions** (confirmed by the owner):
 
 - In "## The plan map", after the mermaid paragraph:
-  > **Units.** Group the map into ordered units with flat subgraphs (`subgraph slug[Title]` … `end`). A unit is one coherent topic, usually a chapter or section of his material, cut where that material is closed, and roughly 3–5 nodes. Every node sits in exactly one unit, and a prerequisite never sits in a later unit. If his material has a place for the unit, add `%% source: <chapter, pages>` inside it. A short single-topic lesson needs no units. When you move into the next unit, the conversation continues from a lesson record instead of the full transcript, so finish a unit's open threads before moving on.
+  > **Units.** Group the map into ordered units with flat subgraphs (`subgraph slug[Title]` … `end`). A unit is one coherent topic, usually a chapter or section of the learner's material, cut where that material is closed, and roughly 3–5 nodes. Every node sits in exactly one unit, and a prerequisite never sits in a later unit. If the learner's material has a place for the unit, add `%% source: <chapter, pages>` inside it. A short single-topic lesson needs no units. When you move into the next unit, the conversation continues from a lesson record instead of the full transcript, so finish a unit's open threads before moving on.
 - In "## Presenting the plan", item 1:
   > Name the units in order, one clause each, and say in one sentence that each unit continues from a summary of the lesson so far rather than the whole conversation.
-- In "## The map moves with him":
+- In "## The map moves with the learner" (renamed by the sweep):
   > Units you have moved past are fixed: a rewrite keeps their ids, order and nodes. Restructure only the current and later units; a newly discovered foundation goes into the current unit. Revisiting a node from an earlier unit is fine and stays in the current unit. You can only move into the next unit, never skip one; to skip, rewrite the plan first.
 - In `40-jobs.md`, after rule 3:
-  > A job belongs to the unit you dispatched it in. Before moving into the next unit, wait until every job has delivered: tell him it belongs to this unit and that you'll wait for it.
+  > A job belongs to the unit you dispatched it in. Before moving into the next unit, wait until every job has delivered: tell the learner it belongs to this unit and that you'll wait for it.
 
 ---
 
@@ -454,6 +483,8 @@ Open points: …                           (line omitted when "")
 - A unit tree layout produces one cluster per unit containing exactly its nodes; a unit-less tree's layout is identical to today's (compare with `blockLayout` output in the same test before and after units are stripped).
 - The live overlay marks finished units muted.
 
+**Result (green 2026-11-21, run 20261121-001415-001-part-8).** The lesson-record marker uses `display: true` like the compaction marker (nothing reads the flag). Owner decision 2026-11-21, **Fix (applied, green 2026-11-21, run 20261121-091019-001-part-8):** when the chat view loads while a unit cut runs, its running banner starts as `SUMMARIZING UNIT <n>…` from the registry's `runningUnit(chatId)` (the value behind `compactingUnit`), not `COMPACTING CONTEXT…` until the live `compaction-changed` event.
+
 ---
 
 ## Part 9 — Docs
@@ -471,12 +502,12 @@ Open points: …                           (line omitted when "")
 
 | Part | Status | Build id |
 |---|---|---|
-| 1 Units in the plan map | not started | |
-| 2 Unit position and guards | not started | |
-| 3 Lesson record core | not started | |
-| 4 Two cut kinds | not started | |
-| 5 Unit-cut runner | not started | |
-| 6 Conversion note | not started | |
-| 7 Teacher doctrine | not started | |
-| 8 What the learner sees | not started | |
-| 9 Docs | not started | |
+| 1 Units in the plan map | green 2026-11-20 | 20261120-204304-001-part-1 |
+| 2 Unit position and guards | green 2026-11-20 | 20261120-210701-001-part-2 |
+| 3 Lesson record core | green 2026-11-20 | 20261120-215245-001-part-3 |
+| 4 Two cut kinds | green 2026-11-20 | 20261120-222200-001-part-4 |
+| 5 Unit-cut runner | green 2026-11-20 | 20261120-225300-001-part-5 |
+| 6 Conversion note | green 2026-11-20 | 20261120-232234-001-part-6 |
+| 7 Teacher doctrine | green 2026-11-20 | 20261120-235613-001-part-7 |
+| 8 What the learner sees | green 2026-11-21 | 20261121-001415-001-part-8 |
+| 9 Docs | green 2026-11-21 | 20261121-003947-001-part-9 |

@@ -17,6 +17,9 @@
  *   graph|flowchart TD|TB|LR|RL|BT   (direction is cosmetic — we layout
  *                                     ourselves; case-insensitive)
  *   %% comment lines
+ *   subgraph id[Title] … end   — a flat unit (ordered by its subgraph line);
+ *                     `%% source: <text>` inside sets the unit's source. A node
+ *                     belongs to the unit open where its id FIRST appears.
  *   node            — bare id (title falls back to the id)
  *   id[title]       — square-bracket label; any single-line title, a
  *                     surrounding "…" pair is stripped
@@ -27,11 +30,12 @@
  * Bare endpoints register as nodes; forward references are fine; duplicate
  * edges dedupe; the first label a node gets wins.
  */
-import type { PlanEdge, PlanNode } from "@/src/core";
+import type { PlanEdge, PlanNode, PlanUnit } from "@/src/core";
 
 export interface ParsedPlan {
 	nodes: PlanNode[];
 	edges: PlanEdge[];
+	units?: PlanUnit[];
 }
 
 export interface PlanParseResult {
@@ -44,6 +48,9 @@ export interface PlanParseResult {
 const HEADER_RE = /^(graph|flowchart)\s+(td|tb|lr|rl|bt)\s*$/i;
 const SLUG_RE = /^[a-z0-9]+([_-][a-z0-9]+)*$/;
 /** Any arrow spelling counts as a requires-edge; chains split on it. */
+const SUBGRAPH_RE = /^subgraph\s+(.+)$/i;
+const END_RE = /^end$/i;
+const SOURCE_RE = /^%%\s*source:(.*)$/;
 const ARROW_RE = /-->|==>|-\.->/;
 /** One edge endpoint: `id`, `id[title]`, or `id("title")`. */
 // The id CANDIDATE class is deliberately broad — anything but whitespace,
@@ -92,12 +99,30 @@ export function parseMermaidPlan(mermaid: string): PlanParseResult {
 	const edges: PlanEdge[] = [];
 	const seenEdges = new Set<string>();
 
+	interface OpenUnit {
+		id: string;
+		title: string;
+		source?: string;
+		nodeIds: string[];
+		line: number;
+	}
+	const units: OpenUnit[] = [];
+	let open: OpenUnit | null = null;
+	const nodeUnit = new Map<string, OpenUnit>(); // id → unit it first appeared in
+	const slugProblem = (kind: string, id: string, lineNo: number): string =>
+		`line ${lineNo}: ${kind} id \`${id}\` must be a lowercase slug (a-z, 0-9, joined by hyphens or underscores — e.g. \`chain-rule-intuition\`); ids are permanent and checks reference them.`;
+	const closeUnit = (u: OpenUnit): void => {
+		if (u.nodeIds.length === 0) problems.push(`line ${u.line}: unit \`${u.id}\` has no nodes.`);
+	};
+
 	const register = ({ id, label }: Endpoint, lineNo: number): void => {
 		if (!SLUG_RE.test(id)) {
-			problems.push(
-				`line ${lineNo}: node id \`${id}\` must be a lowercase slug (a-z, 0-9, joined by hyphens or underscores — e.g. \`chain-rule-intuition\`); ids are permanent and checks reference them.`,
-			);
+			problems.push(slugProblem("node", id, lineNo));
 			return;
+		}
+		if (!nodes.has(id) && open) {
+			nodeUnit.set(id, open);
+			open.nodeIds.push(id);
 		}
 		if (!nodes.has(id)) nodes.set(id, label && label.length > 0 ? label : id);
 		else if (label && label.length > 0 && nodes.get(id) === id) nodes.set(id, label);
@@ -106,7 +131,48 @@ export function parseMermaidPlan(mermaid: string): PlanParseResult {
 	for (let i = first + 1; i < lines.length; i++) {
 		const line = lines[i]?.trim() ?? "";
 		const no = i + 1;
+		const src = line.match(SOURCE_RE);
+		if (src) {
+			if (!open) {
+				problems.push(`line ${no}: \`%% source:\` belongs inside a unit (between \`subgraph\` and \`end\`).`);
+			} else if (open.source !== undefined) {
+				problems.push(`line ${no}: unit \`${open.id}\` already has a source.`);
+			} else {
+				const text = (src[1] ?? "").trim();
+				if (text.length > 0) open.source = text;
+			}
+			continue;
+		}
 		if (line.length === 0 || line.startsWith("%%")) continue;
+
+		const sub = line.match(SUBGRAPH_RE);
+		if (sub) {
+			if (open) {
+				problems.push(`line ${no}: units can't be nested — close \`${open.id}\` with \`end\` first.`);
+				continue;
+			}
+			const ep = parseEndpoint(sub[1] ?? "");
+			if (!ep) {
+				problems.push(`line ${no}: can't read the unit \`${line}\` — expected \`subgraph <id>[Short Title]\`.`);
+				open = { id: (sub[1] ?? "").trim(), title: "", nodeIds: [], line: no };
+				units.push(open);
+				continue;
+			}
+			if (!SLUG_RE.test(ep.id)) problems.push(slugProblem("unit", ep.id, no));
+			else if (units.some((u) => u.id === ep.id)) problems.push(`line ${no}: unit id \`${ep.id}\` is used twice.`);
+			if (!ep.label) problems.push(`line ${no}: unit \`${ep.id}\` needs a title — \`subgraph ${ep.id}[Short Title]\`.`);
+			open = { id: ep.id, title: ep.label ?? "", nodeIds: [], line: no };
+			units.push(open);
+			continue;
+		}
+		if (END_RE.test(line)) {
+			if (!open) problems.push(`line ${no}: \`end\` closes nothing — no unit is open.`);
+			else {
+				closeUnit(open);
+				open = null;
+			}
+			continue;
+		}
 
 		// Edges (incl. chains): split on any arrow spelling; every segment is
 		// an endpoint, consecutive pairs become requires-edges.
@@ -143,9 +209,16 @@ export function parseMermaidPlan(mermaid: string): PlanParseResult {
 			}
 		} else {
 			const node = parseEndpoint(line);
+			const owner = node ? nodeUnit.get(node.id) : undefined;
+			if (node?.label && owner && open && owner !== open) {
+				problems.push(
+					`line ${no}: node \`${node.id}\` is already in unit \`${owner.id}\` — a node belongs to exactly one unit.`,
+				);
+				continue;
+			}
 			if (!node) {
 				problems.push(
-					`line ${no}: can't parse \`${line}\` — ids are the strict part (lowercase slugs: a-z, 0-9, hyphens, underscores); node lines (\`slug[title]\`) and requires-edges (\`a --> b\`) are the accepted forms; subgraphs, styles, and classes are not part of the subset.`,
+					`line ${no}: can't parse \`${line}\` — ids are the strict part (lowercase slugs: a-z, 0-9, hyphens, underscores); node lines (\`slug[title]\`) and requires-edges (\`a --> b\`) are the accepted forms; styles and classes are not part of the subset.`,
 				);
 				continue;
 			}
@@ -153,10 +226,43 @@ export function parseMermaidPlan(mermaid: string): PlanParseResult {
 		}
 	}
 
+	if (open) {
+		const u: OpenUnit = open;
+		problems.push(`line ${u.line}: unit \`${u.id}\` is never closed — add \`end\`.`);
+		closeUnit(u);
+	}
+	if (units.length > 0) {
+		for (const u of units) {
+			if (nodes.has(u.id)) {
+				problems.push(`line ${u.line}: unit id \`${u.id}\` is also a node id — ids must be distinct.`);
+			}
+		}
+		const outside = [...nodes.keys()].filter((id) => !nodeUnit.has(id));
+		if (outside.length > 0) {
+			problems.push(`nodes outside any unit: ${outside.join(", ")} — when the plan has units, every node must be inside one.`);
+		}
+		for (const e of edges) {
+			const uf = nodeUnit.get(e.from);
+			const ut = nodeUnit.get(e.to);
+			if (uf && ut && units.indexOf(uf) > units.indexOf(ut)) {
+				problems.push(
+					`edge \`${e.from}\` --> \`${e.to}\`: the prerequisite is in a later unit (\`${uf.id}\` comes after \`${ut.id}\`) — move it to the same or an earlier unit.`,
+				);
+			}
+		}
+	}
 	const plan: ParsedPlan = {
 		nodes: [...nodes.entries()].map(([id, title]) => ({ id, title })),
 		edges,
 	};
+	if (units.length > 0) {
+		plan.units = units.map((u) => ({
+			id: u.id,
+			title: u.title,
+			...(u.source !== undefined ? { source: u.source } : {}),
+			nodeIds: [...u.nodeIds],
+		}));
+	}
 	if (problems.length > 0) return { ok: false, problems };
 	if (plan.nodes.length === 0) return { ok: false, problems: ["No nodes found — the plan needs at least one."] };
 	return { ok: true, problems: [], plan };

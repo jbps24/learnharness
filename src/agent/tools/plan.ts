@@ -3,7 +3,9 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute } from "../tool-execute.ts";
 import type { PlanToolResult, PlanTree } from "../../core/contracts.ts";
 import type { ChatStore } from "../../core/ports.ts";
+import type { LhMessage } from "../../core/native-messages.ts";
 import { createTree, PlanTreeError } from "../../core/plan-tree.ts";
+import { finishedUnitIds, teachTags, unitIndexOf } from "../../core/units.ts";
 import { parseMermaidPlan } from "./mermaid-plan.ts";
 
 /** The binding-id reminder riding plan_init's slim content (owner,
@@ -55,9 +57,36 @@ const planInitInput = Type.Object({
 		description:
 			"A mermaid graph block (any direction), e.g.:\ngraph TD\n  primitives[Number primitives] --> operators[Arithmetic operators] --> expressions[Evaluating expressions]\n" +
 			"The only strict rule: ids are permanent lowercase slugs (a-z, 0-9, hyphens/underscores) — checks reference them via nodeId. " +
-			"Titles are free single-line text; `-->` means 'from = prerequisite' (chains fine); no subgraphs, styles, or classes.",
+			"Titles are free single-line text; `-->` means 'from = prerequisite' (chains fine); no styles or classes. " +
+				"Group nodes into ordered units with flat mermaid subgraphs: `subgraph slug[Unit Title]` … `end`, one coherent topic each, optional `%% source: <where in the learner's material>` inside. Every node in exactly one unit; a prerequisite never sits in a later unit. A plan without subgraphs is one unit.",
 	}),
 });
+
+/** Rewrite guards (plan 001 part 2): finished units are frozen, and taught
+ *  nodes never sit past the current unit. Null when the rewrite is fine. */
+function rewriteGuardProblem(oldTree: PlanTree | undefined, next: PlanTree, messages: readonly LhMessage[]): string | null {
+	const finished = finishedUnitIds(messages);
+	for (const [i, id] of finished.entries()) {
+		const nextUnit = next.units?.[i];
+		const oldUnit = oldTree?.units?.find((u) => u.id === id);
+		const sameNodes =
+			!oldUnit || (nextUnit !== undefined && nextUnit.nodeIds.length === oldUnit.nodeIds.length && nextUnit.nodeIds.every((n) => oldUnit.nodeIds.includes(n)));
+		if (nextUnit?.id !== id || !sameNodes) {
+			return `unit "${id}" is finished (the lesson has moved past it) — finished units keep their id, order and nodes. Change only the current and later units.`;
+		}
+	}
+	const tags = teachTags(messages).filter((t) => next.nodes.some((n) => n.id === t.nodeId));
+	const latest = tags.at(-1);
+	if (!latest || !next.units) return null;
+	const limit = unitIndexOf(next, latest.nodeId)!;
+	for (const tag of tags) {
+		const index = unitIndexOf(next, tag.nodeId)!;
+		if (index > limit) {
+			return `node "${tag.nodeId}" has already been taught but would sit in unit "${next.units[index]!.title}", after the current unit "${next.units[limit]!.title}". Keep taught nodes in the current unit or earlier.`;
+		}
+	}
+	return null;
+}
 
 export function planTools(ctx: PlanToolContext): Record<string, AgentTool<any>> {
 	return {
@@ -69,6 +98,7 @@ export function planTools(ctx: PlanToolContext): Record<string, AgentTool<any>> 
 				"Call once right after the probe concludes, to present the map; re-call whenever the map is wrong (the new block replaces the old tree). " +
 				"A mermaid graph block (any direction): one node per line (`slug[Short Title]` — slugs are permanent lowercase ids: a-z, 0-9, hyphens/underscores), " +
 				"`-->` edges meaning 'from must be understood before to' (chains fine). 5–15 nodes: a map, not a syllabus — one reasoning step per node, compress. " +
+				"Group nodes into ordered units with flat mermaid subgraphs: `subgraph slug[Unit Title]` … `end`, one coherent topic each, optional `%% source: <where in the learner's material>` inside. Every node in exactly one unit; a prerequisite never sits in a later unit. A plan without subgraphs is one unit. " +
 				"Every check you fire names the node it assesses via `nodeId`; where the lesson stands derives from those tags.",
 			parameters: planInitInput,
 			execute: serverExecute("plan_init", planInitInput, async ({ mermaid }) => {
@@ -86,7 +116,9 @@ export function planTools(ctx: PlanToolContext): Record<string, AgentTool<any>> 
 				try {
 					// createTree validates the structure (duplicate ids, missing
 					// edge endpoints, self-loops, cycles → PlanTreeError).
-					const next = createTree(parsed.plan.nodes, parsed.plan.edges);
+					const next = createTree(parsed.plan.nodes, parsed.plan.edges, parsed.plan.units);
+					const rewriteProblem = rewriteGuardProblem(record.tree, next, record.messages ?? []);
+					if (rewriteProblem) return { ok: false, error: rewriteProblem };
 					chatStore.saveTree(chatId, next);
 					// Context diet: content = the validated nodeIds + the reminder (the
 				// ids just became binding for every quiz/explain call); details =
@@ -96,6 +128,7 @@ export function planTools(ctx: PlanToolContext): Record<string, AgentTool<any>> 
 						text: JSON.stringify({
 							ok: true,
 							nodeIds: next.nodes.map((n) => n.id),
+							...(next.units ? { unitIds: next.units.map((u) => u.id) } : {}),
 							reminder: PLAN_NODE_IDS_REMINDER,
 						}),
 						details: { ok: true, tree: next },

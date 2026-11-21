@@ -47,7 +47,7 @@ import {
 	THINKING_LABEL,
 } from "./contracts/chat.ts";
 import { compactAnswerForModel, type QuestionAnswerData } from "./question-core.ts";
-import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
+import { isContextCut, projectionHeads } from "./compaction.ts";
 import { parseQuestionInput } from "./tool-parts.ts";
 import { expandCitationsForModel } from "./citations.ts";
 import { readPluginQuestionMessageAnnotation, readPluginQuestionAnswer, readPluginQuestionCancellation, samePluginQuestionOccurrence, type PluginQuestionAnnotationRead, type PluginQuestionOccurrence, type PluginQuestionOccurrenceMap, type PluginQuestionSnapshot } from "./plugin-questions.ts";
@@ -84,7 +84,9 @@ export interface LhMarkerMessage {
 		| "problem-dismissed"
 		| "compaction"
 		| "side-question"
-		| "side-question-told";
+		| "side-question-told"
+		| "lesson-record"
+		| "units-note";
 	/** The model-facing text ("" for plan blocks — UI-only). */
 	content: string;
 	display: boolean;
@@ -117,7 +119,7 @@ export type LhMessage = (UserMessage | AssistantMessage | ToolResultMessage | Lh
 export function cliContextWindowOf(messages: readonly LhMessage[]): { model: string; tokens: number } | null {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i]!;
-		if (message.role === "custom" && message.customType === "compaction") return null;
+		if (isContextCut(message)) return null;
 		if (message.role !== "assistant") continue;
 		const tokens = message.cliContextWindow;
 		return message.provider === CLAUDE_CODE_PROVIDER && typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens > 0
@@ -382,6 +384,23 @@ export function newNextMessage(): LhMarkerMessage {
 		content: NEXT_PROBLEM_TEXT,
 		display: true,
 		details: {},
+		timestamp: Date.now(),
+	};
+}
+
+/** The one-time note asking the teacher to group an old unit-less plan into
+ *  units (plan 001 part 6). Wire-only: the view renders nothing for it. */
+export const UNITS_NOTE_TEXT =
+	"[Session note] This lesson's plan has no units yet. If it spans more than one topic, re-call plan_init now with the same nodes grouped into ordered units (`subgraph slug[Title]` … `end`, optional `%% source:` line). Already-taught nodes must sit in the current unit or earlier. A single-topic plan may stay as it is. Then continue teaching where you left off; don't present the plan again.";
+
+export function newUnitsNoteMessage(): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "units-note",
+		content: UNITS_NOTE_TEXT,
+		display: false,
+		details: null,
 		timestamp: Date.now(),
 	};
 }
@@ -659,20 +678,15 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 	// whose stored positions still lie after the cut. A cut naming a
 	// missing id degrades honestly (everything renders — never throw).
 	const lhMessages = messages as readonly LhMessage[];
-	const active = activeCompactionOf(lhMessages);
-	let start = 0;
-	let head: Message | null = null;
-	if (active) {
-		const kept = keptIndexFor(lhMessages, active);
-		if (kept > 0) {
-			start = kept;
-			head = {
-				role: "user",
-				content: [{ type: "text", text: active.content }],
-				timestamp: active.timestamp,
-			};
-		}
-	}
+	// A lesson record (unit cut) heads the projection like a compaction; an
+	// in-unit compaction at or after it follows it (projectionHeads).
+	const { start, heads } = projectionHeads(lhMessages);
+	const headMessages: Message[] = heads.map((marker) => ({
+		role: "user",
+		content: [{ type: "text", text: marker.content }],
+		timestamp: marker.timestamp,
+	}));
+	const head = headMessages.length ? headMessages : null;
 	// THE LEADING SYSTEM MESSAGE IS REQUEST CHROME, NEVER COMPACTABLE
 	// PAYLOAD (the OpenRouter no-tools incident, owner 2026-10-05):
 	// pi-agent-core's Agent seeds a SystemMessage carrying the system
@@ -688,7 +702,7 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 		(messages[0] as { role?: string } | undefined)?.role === "system" ? (messages[0] as Message) : null;
 	const out: Message[] = [];
 	if (leading) out.push(leading);
-	if (head) out.push(head);
+	if (head) out.push(...head);
 	for (let i = leading ? Math.max(start, 1) : start; i < messages.length; i++) {
 		const m = messages[i]!;
 		const role = (m as { role?: string }).role;
@@ -703,6 +717,7 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 			// stored position. Without a resolved head, preserve the existing
 			// full-history fallback, including the summary text.
 			if (marker.customType === "compaction" && head !== null) continue;
+			if (marker.customType === "lesson-record") continue;
 			const problemSubmission = marker.customType === "plugin-problem-submission" ? readPluginProblemSubmission(marker.details) : null;
 			out.push({
 				role: "user",
@@ -988,7 +1003,7 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
 		if (["practice-thinking", "plugin-problem-submission", "practice-next"].includes(message.customType)) return "learner";
-		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told"].includes(message.customType) ? "neutral" : "unrecognizable";
+		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "lesson-record", "units-note"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {
 		const pluginAnswer = readPluginQuestionAnswer(message.details);

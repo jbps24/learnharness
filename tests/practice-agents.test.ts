@@ -379,7 +379,7 @@ describe("practice prompt composition (own directory + the formatting appendix)"
 		assert.match(prober, /Strands inform each other/);
 		assert.match(prober, /never descending into already-bracketed territory/);
 		// the confidence + thinking signals are wired into question selection
-		assert.match(prober, /the verdict, his confidence, and his thinking field together set where the next question should sit/);
+		assert.match(prober, /the verdict, (?:their|the learner's) confidence, and (?:their|the learner's) thinking field together set where the next question should sit/);
 	});
 
 	it("the SHARED formatting guide composes (owner, 2026-10-04 late): LaTeX delimiters in every setting", () => {

@@ -15,6 +15,7 @@ import {
 import { filterEnabledTools, type EnabledTools } from "../core/pending.ts";
 import type { JobRecord } from "../core/contracts.ts";
 import type { JobStore } from "../core/ports.ts";
+import { currentUnitIndex, unitIndexOf } from "../core/units.ts";
 import { jobTools, type DemoInput, type PdfInput, type ResearchInput, type VisualInput } from "./tools/jobs.ts";
 import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
@@ -220,7 +221,7 @@ export const probeQuizTool: AgentTool<typeof probeQuizInputSchema> = {
 /** The teacher's free-recall variant (nodeId-validated, same seam as the
  *  teach quiz — phases/plan recognize BOTH tool names). */
 export function teachExplainToolFor(
-	ctx: Pick<PlanToolContext, "chatId" | "chatStore">,
+	ctx: Pick<TeacherToolContext, "chatId" | "chatStore" | "jobStore">,
 ): AgentTool<typeof explainInputObject> {
 	return {
 		name: "explain",
@@ -231,8 +232,8 @@ export function teachExplainToolFor(
 		executionMode: "sequential",
 		execute: async (_toolCallId, input) => {
 			const problems = [...explainInputProblems(input)];
-			const nodeIdProblemText = nodeIdProblem(ctx, input.nodeId);
-			if (nodeIdProblemText) problems.push(nodeIdProblemText);
+			const tagProblemText = teachTagProblem(ctx, input.nodeId);
+			if (tagProblemText) problems.push(tagProblemText);
 			if (problems.length > 0) return invalidInputResult("explain", problems);
 			return questionResult();
 		},
@@ -352,7 +353,10 @@ export function createProberTools(
 
 /** The nodeId-against-live-tree check the teacher's quiz chains after the
  *  shared authoring contract (the old superRefine, verbatim). */
-function nodeIdProblem(ctx: Pick<PlanToolContext, "chatId" | "chatStore">, nodeId: string): string | null {
+export function teachTagProblem(
+	ctx: Pick<TeacherToolContext, "chatId" | "chatStore" | "jobStore">,
+	nodeId: string,
+): string | null {
 	const record = ctx.chatStore.getChat(ctx.chatId);
 	const known = record?.tree?.nodes.map((n) => n.id) ?? [];
 	if (!known.includes(nodeId)) {
@@ -362,6 +366,19 @@ function nodeIdProblem(ctx: Pick<PlanToolContext, "chatId" | "chatStore">, nodeI
 				? `Copy one of your plan_init slugs exactly (${known.slice(0, 5).join(", ")}${known.length > 5 ? ", …" : ""}).`
 				: "No plan map exists yet — call plan_init before posing quizzes.")
 		);
+	}
+	const tree = record!.tree!;
+	const units = tree.units;
+	if (!units) return null;
+	const cur = currentUnitIndex(tree, record!.messages ?? [])!;
+	const target = unitIndexOf(tree, nodeId)!;
+	if (target <= cur) return null;
+	if (target >= cur + 2) {
+		return `nodeId "${nodeId}" is in unit "${units[target]!.title}", but the next unit is "${units[cur + 1]!.title}". Units are taught in order — to skip "${units[cur + 1]!.title}", rewrite the plan with plan_init first (reorder or remove it).`;
+	}
+	const pending = ctx.jobStore.listJobs(ctx.chatId).find((j) => j.status === "running" || j.delivery?.status === "pending");
+	if (pending) {
+		return `A background job (${pending.kind}) from the current unit has not delivered yet — it still belongs to unit "${units[cur]!.title}". Tell the learner it belongs to this unit and that you will wait for it; move on to "${units[target]!.title}" once it has arrived.`;
 	}
 	return null;
 }
@@ -373,7 +390,7 @@ function nodeIdProblem(ctx: Pick<PlanToolContext, "chatId" | "chatStore">, nodeI
  *  nodeId is REQUIRED (owner ruling 2026-09-26): the untagged ad-hoc quiz is
  *  gone — off-map checks route through ask_user_question, and the teach
  *  seam (first tagged quiz) is structurally guaranteed. */
-export function teachQuizToolFor(ctx: Pick<PlanToolContext, "chatId" | "chatStore">): AgentTool<typeof quizInputObject> {
+export function teachQuizToolFor(ctx: Pick<TeacherToolContext, "chatId" | "chatStore" | "jobStore">): AgentTool<typeof quizInputObject> {
 	return {
 		name: "quiz",
 		label: "quiz",
@@ -383,8 +400,8 @@ export function teachQuizToolFor(ctx: Pick<PlanToolContext, "chatId" | "chatStor
 		executionMode: "sequential",
 		execute: async (_toolCallId, input) => {
 			const problems = [...quizInputProblems(input)];
-			const nodeIdProblemText = nodeIdProblem(ctx, input.nodeId);
-			if (nodeIdProblemText) problems.push(nodeIdProblemText);
+			const tagProblemText = teachTagProblem(ctx, input.nodeId);
+			if (tagProblemText) problems.push(tagProblemText);
 			if (problems.length > 0) return invalidInputResult("quiz", problems);
 			return questionResult();
 		},

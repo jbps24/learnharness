@@ -49,10 +49,12 @@ import {
 	type LhMarkerMessage,
 } from "../core/index.ts";
 import { emit } from "../core/events.ts";
+import { newestLessonRecord, unitCutDue } from "../core/units.ts";
 import type { ChatStore } from "../core/ports.ts";
 import type { PiEngine } from "../agent/models.ts";
 import { runSubagent } from "../agent/subagents/pi-run.ts";
 import { isTurnRunning } from "./turn-liveness.ts";
+import { runUnitCut } from "./unit-cut.ts";
 
 /** The summarizer's system prompt — server-owned operational framing,
  *  not model-facing doctrine (buildCompactionPrompt carries the shape). */
@@ -65,7 +67,7 @@ const SUMMARIZER_SYSTEM_PROMPT =
 export type Summarizer = (prompt: string, engine: PiEngine) => Promise<{ summary: string; usage: Usage }>;
 
 /** The production summarizer over the sub-agent seam. */
-async function subagentSummarizer(prompt: string, engine: PiEngine): Promise<{ summary: string; usage: Usage }> {
+export async function subagentSummarizer(prompt: string, engine: PiEngine): Promise<{ summary: string; usage: Usage }> {
 	let usage: Usage = {
 		input: 0,
 		output: 0,
@@ -131,7 +133,7 @@ export interface CompactionDeps {
 	/** A provider byte cap also sizes the kept tail (Antigravity): the cut
 	 * keeps `budget` worth of recent messages measured by `size`, instead of
 	 * KEEP_RECENT_TOKENS, so the compacted request lands under the trigger. */
-	keptTail?: (messages: readonly LhMessage[]) => { budget: number; size: (message: LhMessage) => number };
+	keptTail?: (messages: readonly LhMessage[]) => { budget: number; size?: (message: LhMessage) => number };
 	/** Trigger against a prospective request without recording/summarizing
 	 * its new cargo. The cut and summary still use only saved history. */
 	projectMessages?: (record: ChatRecord) => readonly LhMessage[];
@@ -143,10 +145,25 @@ export interface CompactionDeps {
 
 interface CompactionState {
 	inFlight: Map<string, Promise<void>>;
+	/** The 1-based unit a running unit cut is summarizing, per chat. */
+	units: Map<string, number>;
 }
 const g = globalThis as typeof globalThis & { __lhCompaction?: CompactionState };
 function state(): CompactionState {
-	return (g.__lhCompaction ??= { inFlight: new Map() });
+	const s = (g.__lhCompaction ??= { inFlight: new Map(), units: new Map() });
+	return (s.units ??= new Map()), s;
+}
+
+/** The unit number while a unit cut runs for this chat (plan 001 part 8),
+ *  undefined for an ordinary compaction or none. */
+export function runningUnit(chatId: string): number | undefined {
+	return state().units.get(chatId);
+}
+
+/** Unit-cut bookkeeping: set when the summary starts, cleared (undefined) at its end. */
+export function setRunningUnit(chatId: string, unit: number | undefined): void {
+	if (unit === undefined) state().units.delete(chatId);
+	else state().units.set(chatId, unit);
 }
 
 /** Is a compaction running for this chat? (The client status event's
@@ -234,6 +251,18 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 	while ((await compactPass(deps, chatId)) === "partial") { /* chain the next chunk */ }
 }
 
+/** What the registry runs: the unit cut if due (any outcome), then the
+ *  compaction passes — each pass re-checks the threshold itself, so a failed
+ *  cut falls back to compaction inside the old unit. */
+async function maintain(deps: CompactionDeps, chatId: string): Promise<void> {
+	await runUnitCut(deps, chatId);
+	await compact(deps, chatId);
+}
+
+function unitCutDueFor(record: ChatRecord): boolean {
+	return record.tree ? unitCutDue(record.tree, record.messages) : false;
+}
+
 /** One summary + marker. Reads the record fresh, cuts, summarizes, inserts
  *  the marker after the summarized messages, records usage, notifies.
  *  "partial" means only the oldest chunk of the span fit one request. */
@@ -274,15 +303,20 @@ async function compactPass(deps: CompactionDeps, chatId: string): Promise<"done"
 	}
 
 	// The span: from the PREVIOUS kept boundary through the cut.
-	let spanStart = 0;
+	// Never across a unit cut: with a lesson record the span starts at its kept
+	// message or the in-unit compaction's kept boundary, whichever is later.
+	const lessonRecord = newestLessonRecord(messages);
+	const recordKept = lessonRecord ? messages.findIndex((m) => m.id === lessonRecord.details.firstKeptMessageId) : -1;
+	if (lessonRecord && cut <= recordKept) return "done"; // no cut candidate after the record
+	let spanStart = Math.max(0, recordKept);
 	let priorSummary: string | null = null;
-	if (previous && prevKept > 0) {
+	if (previous && prevKept > 0 && prevKept >= recordKept) {
 		spanStart = prevKept;
 		priorSummary = previous.content;
 	}
-	const planTreeText = planTreeToText(record.tree, messages);
+	const planTreeText = lessonRecord ? null : planTreeToText(record.tree, messages);
 	const promptFor = (end: number) => {
-		const span = messages.slice(spanStart, end);
+		const span = messages.slice(spanStart, end).filter((m) => m.role !== "custom" || m.customType !== "lesson-record");
 		// The separately supplied prior summary replaces all summary markers
 		// in this span. Without a resolved prior boundary, retain the existing
 		// legacy fallback rather than silently discarding summary-only context.
@@ -291,7 +325,7 @@ async function compactPass(deps: CompactionDeps, chatId: string): Promise<"done"
 			: span;
 		const spanText = serializeForSummary(summaryMessages);
 		const fullSpan = priorSummary ? `[SYSTEM NOTE — prior compaction summary, still authoritative where not superseded]\n${priorSummary}\n\n${spanText}` : spanText;
-		return buildCompactionPrompt({ spanText: fullSpan, planTreeText, kind: deps.kind });
+		return buildCompactionPrompt({ spanText: fullSpan, planTreeText, kind: deps.kind, afterRecord: lessonRecord !== null });
 	};
 
 	// Too large for one summary request: keep more verbatim this pass (the
@@ -390,13 +424,13 @@ export async function ensureCompacted(deps: CompactionDeps, chatId: string): Pro
 	if (!record) return;
 	const model = deps.includeReasoning ? deps.engine.model : undefined;
 	const projected = deps.projectMessages?.(record) ?? record.messages;
-	if (projectedContextTokens(projected, deps.systemPromptTokens, model) <= deps.thresholdTokens && !deps.requestOverLimit?.(projected)) return;
+	if (!unitCutDueFor(record) && projectedContextTokens(projected, deps.systemPromptTokens, model) <= deps.thresholdTokens && !deps.requestOverLimit?.(projected)) return;
 	const admitted = state().inFlight.get(chatId);
 	if (admitted) {
 		await admitted;
 		return;
 	}
-	const run = compact(deps, chatId);
+	const run = maintain(deps, chatId);
 	state().inFlight.set(chatId, run);
 	try {
 		await run;
@@ -419,8 +453,8 @@ export function kickCompaction(buildDeps: () => CompactionDeps | null, chatId: s
 	if (!deps || deps.canStart?.() === false) return;
 	const record = deps.chatStore.getChat(chatId);
 	if (!record) return;
-	if (projectedContextTokens(record.messages, deps.systemPromptTokens, deps.includeReasoning ? deps.engine.model : undefined) <= deps.thresholdTokens && !deps.requestOverLimit?.(record.messages)) return;
-	const run = compact(deps, chatId);
+	if (!unitCutDueFor(record) && projectedContextTokens(record.messages, deps.systemPromptTokens, deps.includeReasoning ? deps.engine.model : undefined) <= deps.thresholdTokens && !deps.requestOverLimit?.(record.messages)) return;
+	const run = maintain(deps, chatId);
 	state().inFlight.set(chatId, run);
 	void run.finally(() => {
 		if (state().inFlight.get(chatId) === run) state().inFlight.delete(chatId);

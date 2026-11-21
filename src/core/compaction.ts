@@ -39,6 +39,7 @@ import { derivePlanStatusesLh, derivedNodeStatus } from "./contracts/plan.ts";
 import { COMPACTED_HISTORY_HEADER } from "./contracts/chat.ts";
 import type { LhMessage, LhMarkerMessage } from "./native-messages.ts";
 import { newMessageId } from "./native-messages.ts";
+import { newestLessonRecord } from "./units.ts";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, AssistantMessage, Model, ToolResultMessage, SystemMessage } from "@earendil-works/pi-ai";
 
@@ -142,6 +143,30 @@ function textCharsOfContent(content: unknown): number {
 	return chars;
 }
 
+/** Whether a message is a context-cut marker (compaction or lesson-record). */
+export function isContextCut(m: LhMessage | AgentMessage): boolean {
+	if ((m as { role?: string }).role !== "custom") return false;
+	const type = (m as LhMarkerMessage).customType;
+	return type === "compaction" || type === "lesson-record";
+}
+
+/** Where the model-visible projection starts and which marker contents head it.
+ * No record → the compaction-only rule (head only when its kept index > 0).
+ * A record heads the projection; an in-unit compaction at or after the record
+ * follows it. */
+export function projectionHeads(messages: readonly LhMessage[]): { start: number; heads: LhMarkerMessage[] } {
+	const record = newestLessonRecord(messages);
+	const active = activeCompactionOf(messages);
+	const compactionKept = active ? keptIndexFor(messages, active) : -1;
+	const r = record ? messages.findIndex((m) => m.id === record.details.firstKeptMessageId) : -1;
+	if (record && r >= 0) {
+		if (compactionKept >= r && active) return { start: compactionKept, heads: [record, active] };
+		return { start: r, heads: [record] };
+	}
+	if (active && compactionKept > 0) return { start: compactionKept, heads: [active] };
+	return { start: 0, heads: [] };
+}
+
 /** The newest assistant message carrying VALID provider-reported usage
  * (pi's rule: skip aborted/error messages and all-zero usage — they carry no
  * truth about the wire). The scan STOPS at the newest compaction
@@ -155,7 +180,7 @@ export function lastAssistantUsageIndex(
 ): number | null {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const m = messages[i]!;
-		if ((m as { role?: string }).role === "custom" && (m as LhMarkerMessage).customType === "compaction") return null;
+		if (isContextCut(m)) return null;
 		if ((m as { role?: string }).role !== "assistant") continue;
 		const a = m as AssistantMessage & { stopReason?: string };
 		if (a.stopReason === "aborted" || a.stopReason === "error") continue;
@@ -214,7 +239,7 @@ export function estimateTokens(messages: readonly (LhMessage | AgentMessage)[], 
  * markers have no context, just like native metadata entries. */
 function cutMessage(message: LhMessage): LhMessage | null {
 	if (message.role !== "custom") return message;
-	if (["compaction", "plan-block", "problem-dismissed"].includes(message.customType)) return null;
+	if (["compaction", "lesson-record", "plan-block", "problem-dismissed"].includes(message.customType)) return null;
 	if (message.customType === "side-question" && !message.content) return null; // an empty marker has no model-visible text
 	return message;
 }
@@ -237,9 +262,12 @@ export function compactionCutIndex(
 ): number {
 	const previous = activeCompactionOf(messages);
 	const previousKept = previous ? keptIndexFor(messages, previous) : -1;
-	const start = Math.max(0, previousKept);
+	const record = newestLessonRecord(messages);
+	const recordKept = record ? messages.findIndex((m) => m.id === record.details.firstKeptMessageId) : -1;
+	const start = Math.max(0, previousKept, recordKept);
 	const points: number[] = [];
-	for (let i = start; i < messages.length; i++) {
+	// A unit cut is never crossed: with a record, candidates are strictly after it.
+	for (let i = record ? Math.max(start, recordKept + 1) : start; i < messages.length; i++) {
 		const message = cutMessage(messages[i]!);
 		if (message && (message.role === "user" || message.role === "assistant" || message.role === "custom")) points.push(i);
 	}
@@ -260,7 +288,7 @@ export function compactionCutIndex(
 	// backwards across a previous compaction entry.
 	while (cut > start) {
 		const before = messages[cut - 1]!;
-		if ((before.role === "custom" && before.customType === "compaction") || cutMessage(before)) break;
+		if (isContextCut(before) || cutMessage(before)) break;
 		cut--;
 	}
 	return cut;
@@ -278,7 +306,7 @@ export function compactionCutPoints(messages: readonly LhMessage[], start: numbe
 		let cut = i;
 		while (cut > start) {
 			const before = messages[cut - 1]!;
-			if ((before.role === "custom" && before.customType === "compaction") || cutMessage(before)) break;
+			if (isContextCut(before) || cutMessage(before)) break;
 			cut--;
 		}
 		if (cut > start && points.at(-1) !== cut) points.push(cut);
@@ -427,7 +455,29 @@ export function buildCompactionPrompt(input: {
 	planTreeText: string | null;
 	/** The session kind (wording: tutor vs practice agent). */
 	kind: "teach" | "practice" | "probe";
+	/** When true, omit the plan dependency tree and scope sections to the current unit. */
+	afterRecord?: boolean;
 }): string {
+	if (input.afterRecord) {
+		return `You are compacting the earlier part of the CURRENT UNIT of a tutoring session — writing the summary your future self will read INSTEAD of that part of the transcript. Everything before the cut is replaced by what you write; everything after stays verbatim. The lesson record, which carries the plan and the earlier units, is kept separately and is not yours to restate. The learner's transcript below labels the learner as [LEARNER], the tutoring agent as [TUTOR], tool traffic as [RESULT …]/[SYSTEM NOTE].
+
+Write the summary with EXACTLY these sections, in this order:
+
+## The learner's understanding (this unit)
+The most detailed picture you can give of what this learner knows and how that EVOLVED across the current unit: what they answered and how well (quiz outcomes, correct reasoning, mistakes), their stated or displayed confidence, misconceptions that surfaced, which were corrected and which still stand. This section carries the most weight — future teaching decisions hang on it.
+
+## The teaching arc (this unit)
+How the current unit progressed: what was covered and in what order, which explanations landed and which didn't, how the learner responded, where the momentum went.
+
+## The current moment
+What is happening RIGHT NOW at the cut: any question or problem awaiting the learner's answer, any commitment the agent has made that a later turn must honor, and the immediate next step.
+
+Rules: no praise, no filler, no speculation beyond the transcript. Every claim about the learner must be traceable to what they actually said or answered. Keep every identifier (proposition ids, node ids, file paths) exact.
+
+TRANSCRIPT TO SUMMARIZE:
+
+${input.spanText}`;
+	}
 	const planSection =
 		input.planTreeText ?? "No plan tree exists in this session (nothing was persisted).";
 	return `You are compacting the earlier part of a tutoring session — writing the summary your future self will read INSTEAD of that transcript. Everything before the cut is replaced by what you write; everything after stays verbatim. The learner's transcript below labels the learner as [LEARNER], the tutoring agent as [TUTOR], tool traffic as [RESULT …]/[SYSTEM NOTE].

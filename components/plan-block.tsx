@@ -13,8 +13,8 @@ import { layout as dagreLayout } from "dagre-d3-es/src/dagre/index.js";
 // d3's curveBasis (the exact recipe dagre-d3's own renderer uses).
 import { curveBasis, line } from "d3-shape";
 import { fitGraphView, fitZoomFor, zoomedGraphView, type Viewport } from "@/components/pan-zoom";
-import type { PlanBlockData, PlanNodeStatus, PlanTree } from "@/src/core";
-import { derivedNodeStatus, derivePlanStatuses } from "@/src/core";
+import type { LhMessage, PlanBlockData, PlanNodeStatus, PlanTree, PlanUnit } from "@/src/core";
+import { currentUnitIndex, derivedNodeStatus, derivePlanStatuses, finishedUnitIds } from "@/src/core";
 import { Hint } from "@/components/ui/hint";
 import { InteractionLayerOwner, useInteractionLayer } from "./interaction-layers";
 
@@ -89,6 +89,10 @@ export function estimateLineWidth(line: string): number {
 export const LINE_H = 13;
 export const GAP_X = 24;
 export const GAP_Y = 48;
+/** A unit box's padding around its nodes, and the headroom above them for
+ *  the unit title (top-left). */
+export const CLUSTER_PAD = 10;
+export const CLUSTER_TITLE_H = 16;
 
 /** A node for layout purposes — the payload's shape and the tree's shape agree. */
 export interface LayoutNode {
@@ -147,7 +151,8 @@ export function topoFor(nodes: readonly LayoutNode[], edges: ReadonlyArray<{ fro
  *  Deterministic + synchronous + DOM-free: SSR and render tests stay
  *  exact. Dangling edges are ignored defensively — a ghost endpoint
  *  would spawn an unmeasured node and break the measurer. */
-export function blockLayout(nodes: readonly LayoutNode[], edges: ReadonlyArray<{ from: string; to: string }>) {
+export function blockLayout(nodes: readonly LayoutNode[], edges: ReadonlyArray<{ from: string; to: string }>, units?: readonly PlanUnit[]) {
+	const clustered = !!units && units.length > 0;
 	const x = new Map<string, number>();
 	const y = new Map<string, number>();
 	const nodeH = new Map<string, number>();
@@ -157,10 +162,10 @@ export function blockLayout(nodes: readonly LayoutNode[], edges: ReadonlyArray<{
 	 *  (round 11: the mermaid line drawing, no more fixed bottom-center →
 	 *  top-center). Keyed `${from}->${to}`. */
 	const edgePts = new Map<string, Array<{ x: number; y: number }>>();
-	if (nodes.length === 0) return { x, y, nodeH, nodeW, edgePts, width: 0, height: 0 };
+	if (nodes.length === 0) return { x, y, nodeH, nodeW, edgePts, clusters: [], width: 0, height: 0 };
 	const ids = new Set(nodes.map((n) => n.id));
 	const routed: Array<{ from: string; to: string }> = [];
-	const g = new graphlib.Graph({ compound: false, multigraph: true });
+	const g = new graphlib.Graph({ compound: clustered, multigraph: true });
 	g.setGraph({ rankdir: "TB", nodesep: GAP_X, ranksep: GAP_Y, marginx: 0, marginy: 0 });
 	for (const n of nodes) {
 		const lines = wrapTitle(n.title);
@@ -168,6 +173,19 @@ export function blockLayout(nodes: readonly LayoutNode[], edges: ReadonlyArray<{
 		nodeH.set(n.id, h);
 		nodeW.set(n.id, nodeWidth(lines));
 		g.setNode(n.id, { width: nodeW.get(n.id)!, height: h });
+	}
+	// One dagre cluster per unit (setParent); a cluster id can't collide
+	// with a node id, so it is namespaced.
+	const clusterIds: Array<{ unit: PlanUnit; cid: string; members: string[] }> = [];
+	if (clustered) {
+		for (const u of units) {
+			const members = u.nodeIds.filter((id) => ids.has(id));
+			if (members.length === 0) continue;
+			const cid = `unit:${u.id}`;
+			g.setNode(cid, {});
+			for (const id of members) g.setParent(id, cid);
+			clusterIds.push({ unit: u, cid, members });
+		}
 	}
 	for (const e of edges) {
 		if (ids.has(e.from) && ids.has(e.to)) {
@@ -219,6 +237,35 @@ export function blockLayout(nodes: readonly LayoutNode[], edges: ReadonlyArray<{
 		stretch(nx, ny);
 		stretch(nx + (nodeW.get(n.id) ?? NODE_W_MIN), ny + (nodeH.get(n.id) ?? NODE_H));
 	}
+	// Unit boxes: the member nodes' hull, padded, with headroom for the title.
+	const clusters: Array<{ id: string; title: string; x: number; y: number; w: number; h: number }> = [];
+	for (const { unit, members } of clusterIds) {
+		let minX = Infinity;
+		let minY = Infinity;
+		let maxX = -Infinity;
+		let maxY = -Infinity;
+		for (const id of members) {
+			const nx = x.get(id);
+			const ny = y.get(id);
+			if (nx === undefined || ny === undefined) continue;
+			minX = Math.min(minX, nx);
+			minY = Math.min(minY, ny);
+			maxX = Math.max(maxX, nx + (nodeW.get(id) ?? NODE_W_MIN));
+			maxY = Math.max(maxY, ny + (nodeH.get(id) ?? NODE_H));
+		}
+		if (minX === Infinity) continue;
+		const box = {
+			id: unit.id,
+			title: unit.title,
+			x: minX - CLUSTER_PAD,
+			y: minY - CLUSTER_PAD - CLUSTER_TITLE_H,
+			w: maxX - minX + 2 * CLUSTER_PAD,
+			h: maxY - minY + 2 * CLUSTER_PAD + CLUSTER_TITLE_H,
+		};
+		clusters.push(box);
+		stretch(box.x, box.y);
+		stretch(box.x + box.w, box.y + box.h);
+	}
 	for (const e of routed) {
 		const pts = edgePts.get(`${e.from}->${e.to}`);
 		if (!pts) continue;
@@ -249,6 +296,7 @@ export function blockLayout(nodes: readonly LayoutNode[], edges: ReadonlyArray<{
 		nodeH,
 		nodeW,
 		edgePts,
+		clusters,
 		originX,
 		originY,
 		width: Math.max((g.graph().width ?? 0) - originX, inkMaxX === -Infinity ? 0 : inkMaxX - originX, 1),
@@ -484,7 +532,16 @@ export function PlanDiagram({
 	naturalSize,
 	monochrome,
 	fill,
+	units,
+	finishedUnitIds,
+	currentUnitId,
 }: {
+	/** Unit boxes (plan 001 part 8): none → today's layout, unchanged. */
+	units?: readonly PlanUnit[];
+	/** Live overlay only: finished units render muted… */
+	finishedUnitIds?: readonly string[];
+	/** …and the current unit's box takes the emphasis stroke. */
+	currentUnitId?: string | null;
 	nodes: readonly LayoutNode[];
 	edges: ReadonlyArray<{ from: string; to: string }>;
 	statusOf: (id: string) => PlanNodeStatus;
@@ -511,7 +568,12 @@ export function PlanDiagram({
 	 *  flank's width and the band's height rather than run width-first. */
 	fill?: boolean;
 }) {
-	const layout = useMemo(() => blockLayout(nodes, edges), [nodes, edges]);
+	const layout = useMemo(() => blockLayout(nodes, edges, units), [nodes, edges, units]);
+	const mutedNodes = useMemo(() => {
+		const out = new Set<string>();
+		for (const u of units ?? []) if (finishedUnitIds?.includes(u.id)) for (const id of u.nodeIds) out.add(id);
+		return out;
+	}, [units, finishedUnitIds]);
 	// Pad only the full-extent render — the plan window's override viewBox is
 	// a deliberate viewport crop, and the popup keeps its own fit margins.
 	const pad = viewBoxOverride ? 0 : (padUnits ?? 0);
@@ -577,6 +639,22 @@ export function PlanDiagram({
 					<feGaussianBlur stdDeviation={GLOW_BLUR} />
 				</filter>
 			</defs>
+			{layout.clusters.map((c) => (
+				<g key={`unit-${c.id}`} className={finishedUnitIds?.includes(c.id) ? "opacity-40" : undefined} data-testid={`plan-unit-${c.id}`}>
+					<rect
+						x={c.x}
+						y={c.y}
+						width={c.w}
+						height={c.h}
+						rx={8}
+						className={c.id === currentUnitId ? "fill-none stroke-line-strong" : "fill-none stroke-border"}
+						strokeWidth={STROKE_W}
+					/>
+					<text x={c.x + 8} y={c.y + 12} fontSize={10} className="fill-muted-foreground">
+						{c.title}
+					</text>
+				</g>
+			))}
 			{edges.map((e) => {
 				// Dagre's route for this edge: border-intersected waypoints —
 				// the line leaves/enters nodes on whatever side dagre chose
@@ -624,6 +702,7 @@ export function PlanDiagram({
 						transform={`translate(${layout.x.get(n.id) ?? 0}, ${layout.y.get(n.id) ?? 0})`}
 						data-testid={`plan-node-${n.id}`}
 						data-status={status}
+						className={mutedNodes.has(n.id) ? "opacity-40" : undefined}
 					>
 						{/* Rectangular — no corner rounding (owner). */}
 						<rect
@@ -693,6 +772,7 @@ export function PlanBlock({ data, onOpen }: { data: PlanBlockData; onOpen: () =>
 		<PlanDiagram
 			nodes={data.nodes}
 			edges={data.edges}
+			units={data.units}
 			statusOf={statusOf}
 			markerId={markerId}
 			pad={GRAPH_PAD}
@@ -747,8 +827,16 @@ const POPUP_PAD = GLOW_REACH;
  * territory. Surface 80% + blur (owner decision): the transcript ghosts
  * through while the focus owns the session area.
  */
-export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessage[]; onClose: () => void }) {
+export function PlanPopup({ messages, nativeMessages, onClose }: { messages: readonly PopupMessage[]; nativeMessages?: readonly LhMessage[]; onClose: () => void }) {
 	const tree = useMemo(() => latestTree(messages), [messages]);
+	// Unit state (plan 001 part 8) derives from the native record: finished
+	// units mute, the current unit's box takes the emphasis stroke.
+	const finished = useMemo(() => (nativeMessages ? finishedUnitIds(nativeMessages) : []), [nativeMessages]);
+	const currentUnitId = useMemo(() => {
+		if (!tree?.units || !nativeMessages) return null;
+		const index = currentUnitIndex(tree, nativeMessages);
+		return index === null ? null : (tree.units[index]?.id ?? null);
+	}, [tree, nativeMessages]);
 	const statuses = useMemo(
 		() => (tree ? derivePlanStatuses(tree, messages as Parameters<typeof derivePlanStatuses>[1]) : null),
 		[tree, messages],
@@ -772,7 +860,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 		return () => ro.disconnect();
 	}, []);
 
-	const layout = useMemo(() => (tree ? blockLayout(tree.nodes, tree.edges) : null), [tree]);
+	const layout = useMemo(() => (tree ? blockLayout(tree.nodes, tree.edges, tree.units) : null), [tree]);
 	// The fit box is the PADDED ink box — the diagram renders with POPUP_PAD
 	// (= the glow's reach) so the blurred glow never clips at the frame, and
 	// the fit must account for that padding.
@@ -928,6 +1016,9 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 							<PlanDiagram
 								nodes={tree.nodes}
 								edges={tree.edges}
+								units={tree.units}
+								finishedUnitIds={finished}
+								currentUnitId={currentUnitId}
 								statusOf={statusOf}
 								glowId={statuses?.current ?? null}
 								markerId={markerId}

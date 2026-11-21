@@ -58,6 +58,7 @@ export interface ServerEvents {
     "compaction-changed": {
         chatId: string;
         running: boolean;
+        unit?: number;
     };
     "side-chats-changed": {
         chatId: string;
@@ -88,6 +89,7 @@ export interface ServerEvents {
 - ["compaction-changed"](#serverevents-compaction-changed)
 - ["compaction-changed".chatId](#serverevents-compaction-changedchatid)
 - ["compaction-changed".running](#serverevents-compaction-changedrunning)
+- ["compaction-changed".unit](#serverevents-compaction-changedunit)
 - ["side-chats-changed"](#serverevents-side-chats-changed)
 - ["side-chats-changed".chatId](#serverevents-side-chats-changedchatid)
 - ["plugins-changed"](#serverevents-plugins-changed)
@@ -207,6 +209,7 @@ composer/dock submission. This is live state, not a persisted marker.
 "compaction-changed": {
     chatId: string;
     running: boolean;
+    unit?: number;
 };
 ```
 
@@ -220,6 +223,12 @@ chatId: string;
 
 ```ts
 running: boolean;
+```
+
+### ServerEvents "compaction-changed".unit
+
+```ts
+unit?: number;
 ```
 
 ### ServerEvents "side-chats-changed"

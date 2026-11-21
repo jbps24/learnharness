@@ -40,7 +40,8 @@ import { pluginProblemForCall, type PluginProblemSnapshot } from "./plugin-probl
 import { activeCompactionOf, type CompactionDetails } from "./compaction.ts";
 import { QUESTION_TOOLS } from "./pending.ts";
 import type { SubagentArtifactData, SubagentResultMeta } from "./contracts/jobs.ts";
-import type { PlanBlockData } from "./contracts/chat.ts";
+import type { LessonRecordDetails, PlanBlockData } from "./contracts/chat.ts";
+import type { PlanUnit } from "./contracts/plan.ts";
 
 /** One projected transcript part consumed by host renderers and phase/input
  * scanners. type selects the part vocabulary; common fields are optional
@@ -137,6 +138,17 @@ function lastSuccessfulPlanInit(parts: LhViewPart[]): number {
 	return idx;
 }
 
+/** The units of the newest plan tree any plan tool result carries. */
+function latestPlanUnits(messages: readonly LhMessage[]): PlanUnit[] | undefined {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i]!;
+		if (m.role !== "toolResult" || !m.toolName.startsWith("plan_")) continue;
+		const tree = (m.details as { ok?: unknown; tree?: { units?: PlanUnit[] } } | undefined)?.tree;
+		if (tree) return tree.units;
+	}
+	return undefined;
+}
+
 /** Project the native record (+ live turn working list) into the client's
  *  view messages. Pure: the same input always projects to the same list. */
 export function projectView(messages: readonly LhMessage[], live?: LiveTurnState): LhViewMessage[] {
@@ -184,8 +196,40 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 	// user (full history is never hidden); only the MODEL's context jumps.
 	const compaction = activeCompactionOf(messages);
 
+	// Unit cuts (plan 001 part 8): every lesson-record gets a divider before
+	// its kept message, not only the newest. Titles read the live tree.
+	const unitCuts = new Map<string, Array<LhMarkerMessage & { details: LessonRecordDetails }>>();
+	for (const m of messages) {
+		if (m.role !== "custom" || m.customType !== "lesson-record") continue;
+		const details = m.details as LessonRecordDetails | undefined;
+		if (!details) continue;
+		const list = unitCuts.get(details.firstKeptMessageId) ?? [];
+		list.push(m as LhMarkerMessage & { details: LessonRecordDetails });
+		unitCuts.set(details.firstKeptMessageId, list);
+	}
+	const liveUnits = unitCuts.size > 0 ? latestPlanUnits(messages) : undefined;
+
 	for (const m of messages) {
 		const role = (m as { role?: string }).role;
+
+		for (const record of unitCuts.get(m.id) ?? []) {
+			const { currentUnitId, finishedUnitIds } = record.details;
+			const at = liveUnits?.findIndex((u) => u.id === currentUnitId) ?? -1;
+			out.push({
+				id: `unit_${record.id}`,
+				role: "user",
+				parts: [
+					{
+						type: "data-unit-cut",
+						id: `uc_${record.id}`,
+						data: {
+							unitIndex: at >= 0 ? at + 1 : finishedUnitIds.length + 1,
+							title: at >= 0 ? liveUnits![at]!.title : currentUnitId,
+						},
+					},
+				],
+			});
+		}
 
 		if (compaction && m.id === compaction.details.firstKeptMessageId) {
 			out.push({
@@ -497,6 +541,13 @@ function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[]): void {
 		case "problem-dismissed":
 			// UI-only (the ask-style dismissal): the synthesized conclude
 			// pair — which rides the NEXT input — carries the record's face.
+			return;
+		case "units-note":
+			// Wire-only session note (plan 001 part 6): renders nothing.
+			return;
+		case "lesson-record":
+			// Never rendered (plan 001 part 8): the unit divider is emitted by
+			// the fold at the kept boundary, the record itself stays model-facing.
 			return;
 		case "compaction": {
 			// THE MOMENT DIVIDER (owner round 14): minimal centered small
