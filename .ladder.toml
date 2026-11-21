@@ -1,0 +1,93 @@
+# The implementation ladder's config for this repo (~/.claude/ladder/ladder.py; every key: ladder.toml.example there).
+# Models: none set here on purpose. The global ROUTES / FIX_CLAUDE in ladder.py decide; a [routes] table would override them.
+
+[layout]
+tests_dir = "tests"
+source_regex = '^(src|components|app|lib)/.*\.(ts|tsx)$|^electron/.*\.cjs$'
+code_regex = '\.(ts|tsx|js|jsx|mjs|cjs)$'
+header_regex = '\.d\.ts$'
+header_lang = "ts"
+named_roots = ["src", "components", "app", "lib", "electron", "tests", "docs", "plans", "scripts"]
+rule_code_regex = '^(src|components|app|lib|electron|tests)/'
+golden_dir = "tests/fixtures/golden-data"
+plan_number_regex = 'plans/(\d{3})'
+review_guide = ""
+guide_sections = []
+agents_dir = ".claude/agents"
+build_id_regex = ""
+# planning scratch and the file `next dev` rewrites on its own: never part of a chunk's change
+exclude = [".scratch/", "next-env.d.ts"]
+# a change to these reaches no suite
+inert_regex = '\.md$|^(docs|plans|\.scratch)/'
+
+# No [limits]: the suites write temp files, bind loopback ports and some use fixed /tmp paths, so they stay serial.
+
+[context]
+rule_docs = ["AGENTS.md", "CONTEXT.md", "docs/development.md"]
+always_sections = ["No guessing", "This is NOT the Next.js you know", "Language"]
+tests_sections = ["Checks", "Language"]
+implementer_sections = ["Checks", "Safe local work", "Language"]
+whole_sections = []
+
+[commands]
+build = []
+format = []                  # the repo has no formatter; ESLint is a gate
+
+[suites]
+kind = "command"
+run = ["npm", "test", "--silent"]
+# a mutant first runs only the test files named after its source file
+run_filtered = ["sh", "-c", "NODE_ENV=test npx tsx --test $(ls tests/*{filter}*.test.ts tests/*{filter}*.test.tsx 2>/dev/null)"]
+timeout = 900
+suffix = ".test"
+file_ext = ".ts"
+
+[[gates]]
+name = "typecheck"
+cmd = ["npm", "run", "--silent", "typecheck"]
+tail = 60
+
+[[gates]]
+name = "lint"
+cmd = ["npm", "run", "--silent", "lint"]
+tail = 60
+
+[[gates]]
+name = "verify"
+cmd = ["npm", "test", "--silent"]
+tail = 60
+
+[specialists]                # none yet (no .claude/agents checklists in this repo)
+
+[mutate]
+kind = "command"
+dir = "build-mutate"
+link = ["node_modules"]
+
+[allow]                      # Bash commands (each with any arguments) the editing models may run
+build = ["npm test", "npm run typecheck", "npm run lint", "npx tsx", "npx tsc", "npx eslint"]
+implement = ["npm test", "npm run typecheck", "npm run lint", "npx tsx", "npx tsc", "npx eslint"]
+
+[prompt]
+project = "LearnHarness, a Next.js + Electron tutoring app (TypeScript, node:test via tsx)"
+language = "TypeScript"
+rule_examples = "no guessing, pure core vs server, agent-facing texts, tests"
+review_focus = "persisted chat records, turn/compaction concurrency, model-facing context, error paths, docs vs code, scope"
+gate_kinds = "typecheck, lint, tests"
+gates_note = "the gates (`npm run typecheck`, `npm run lint`, `npm test`)"
+source_dir = "`src/` (plus `components/` and `app/` for UI)"
+docs_pointer = "the `docs/` file the plan names (e.g. architecture.md, compaction-accounting.md)"
+binding_rules = """AGENTS.md is binding: never guess a design decision the plan does not settle (report it as needing the user),
+  and read the installed Next guide under `node_modules/next/dist/docs/` before Next.js-facing code. CONTEXT.md is the vocabulary."""
+docs_rule = "Docs follow the code in the same change: the `docs/` file the plan names for what you touched, and the plan's own Result / status lines."
+build_and_test = "`npm run typecheck`, `npm run lint`, then `npm test`."
+test_rules = """Tests are node:test files in `tests/` (`*.test.ts`, `*.test.tsx` for React), run by tsx. Never reuse or edit existing
+  test fixtures or helpers: new helpers live inside the new test file."""
+format_rule = ""
+suite_run = "`NODE_ENV=test npx tsx --test tests/<file>.test.ts`."
+tests_review_extra = "a test that depends on order, wall-clock time, a fixed /tmp path, a real network call or a real model."
+cite_example = "// plan 001 part 3: a 130-character stem is clipped to 120 + …"
+test_style = """Tests use `node:test` and `node:assert/strict` like the existing `tests/*.test.ts` (read one first and match its style).
+  Scratch files go under `os.tmpdir()` via `fs.mkdtempSync`, never a fixed path; no live providers or real sign-in."""
+test_scope = "Prefer the pure `src/core/` unit the step names. Electron, live providers and docs are not tested here."
+red_proof = "`NODE_ENV=test npx tsx --test tests/<your file>.test.ts` must FAIL on one of your asserts (not on a type or import error)."

@@ -67,6 +67,8 @@ The lesson traverses a dependency structure: facts that require other facts. Opt
 
 The plan the learner sees is a **lower-resolution view** of this tree: a structural map of the lesson at a coarse abstraction — not the literal reasoning steps. Plan nodes do not correspond one-to-one to reasoning steps or to turns of teaching. The reasoning step is the fine unit actually traversed in teaching; the plan tree is the landscape it crosses. Both exist, at different resolutions, on purpose.
 
+A long lesson's map is grouped into ordered **units**: each a coherent topic of a few nodes, cut where the material is closed, with every prerequisite in the same or an earlier unit. Units are a pacing and memory boundary, not a second plan. Moving into the next unit is a deliberate act: the open threads of the current unit are finished first (including any background work dispatched in it), units are never skipped without rewriting the plan, and revisiting an earlier unit's node is fine and stays in the current unit. After the move the lesson continues from a record of what was taught and how the learner fared, followed by the verbatim current unit, so the teacher carries the learner's judgment forward without the full transcript. A short single-topic lesson needs no units.
+
 ## 8. Presentation — the clearest possible form of each step
 
 Each reasoning step should be presented in the most optimal way for absorption: the clearest, most articulate form, so the installation of the new understanding is as smooth as possible and each step lands as self-evident.

@@ -8,7 +8,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { LhMessage } from "../native-messages.ts";
 import type { Phase3 } from "../phases.ts";
-import type { PlanNodeStatus, PlanTree } from "./plan.ts";
+import type { PlanNodeStatus, PlanTree, PlanUnit } from "./plan.ts";
 import type { EmissionStats } from "./graph.ts";
 
 // ─── Chat records (the session store's on-disk format) ───────────────────────
@@ -287,6 +287,7 @@ export interface PlanBlockData {
 	 * derived at emission time — the block never re-derives at render. */
 	nodes: Array<{ id: string; title: string; status: PlanNodeStatus }>;
 	edges: Array<{ from: string; to: string }>;
+	units?: PlanUnit[];
 }
 
 /** Saved-session summary with a message count instead of full history.
@@ -320,6 +321,8 @@ export interface ChatListItem extends ChatSummary {
 	/** True while background context compaction holds the chat's model gate.
 	 * Supplied by the live compaction registry, not by saved compaction markers. */
 	compacting: boolean;
+	/** The 1-based unit a running unit cut is summarizing (only while `compacting`). */
+	compactingUnit?: number;
 }
 
 // ─── Learner images in the lesson (issue #363) ──────────────────────────────
@@ -371,3 +374,47 @@ export interface ArtifactPartProps {
 		reveal?: unknown;
 	};
 }
+
+export interface NodeJudgment {
+	learned: string;
+	errorsCorrected: string;
+	openPoints: string;
+}
+
+export interface LessonJudgment {
+	learnerWide: string;
+	commitments: string;
+	nodes: Record<string, NodeJudgment>;
+}
+
+export const LESSON_RECORD_CAPS: {
+	readonly learned: number;
+	readonly errorsCorrected: number;
+	readonly openPoints: number;
+	readonly learnerWide: number;
+	readonly commitments: number;
+} = {
+	learned: 400,
+	errorsCorrected: 300,
+	openPoints: 300,
+	learnerWide: 1500,
+	commitments: 600,
+};
+
+/** Characters of a check question's stem kept in a record line, then "…". */
+export const CHECK_STEM_CLIP: number = 120;
+/** Characters of an explain answer kept in a record line, then "…". */
+export const EXPLAIN_ANSWER_CLIP: number = 160;
+
+export interface LessonRecordDetails {
+	firstKeptMessageId: string;
+	finishedUnitIds: string[];
+	currentUnitId: string;
+	judgment: LessonJudgment;
+	model?: string;
+	tokensBefore?: number;
+	at: string;
+}
+
+export const LESSON_RECORD_HEADER: string =
+	"[LESSON RECORD] The lesson before this point was taught in earlier units; this record replaces that transcript. Its progress facts are computed by the app and are authoritative. Everything after this message is the verbatim transcript of the current unit.";

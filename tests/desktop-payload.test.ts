@@ -138,6 +138,19 @@ describe("desktop standalone payload", () => {
 		});
 	});
 
+	it("removes the traced repo test suite, keeping the real repo's tests", () => {
+		withPayload(({ root, write, run }) => {
+			const suite = path.join("tests", "fixtures", "lesson.test.ts");
+			write(suite);
+			write(path.join(STANDALONE, suite));
+			const result = run();
+			assert.equal(result.status, 0, String(result.stderr));
+			assert.equal(fs.existsSync(path.join(root, STANDALONE, "tests")), false);
+			assert.ok(fs.existsSync(path.join(root, suite)));
+			assert.match(String(result.stdout), /removed build-only payload: tests/);
+		});
+	});
+
 	it("ships complete authoring docs with self-contained relative links and heading anchors", () => {
 		withPayload(({ root, run }) => {
 			const result = run();

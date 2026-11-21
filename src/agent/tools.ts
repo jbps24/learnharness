@@ -15,6 +15,7 @@ import {
 import { filterEnabledTools, type EnabledTools } from "../core/pending.ts";
 import type { JobRecord } from "../core/contracts.ts";
 import type { JobStore } from "../core/ports.ts";
+import { currentUnitIndex, unitIndexOf } from "../core/units.ts";
 import { jobTools, type DemoInput, type PdfInput, type ResearchInput, type VisualInput } from "./tools/jobs.ts";
 import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
@@ -77,14 +78,15 @@ function prepareQuestionArguments<T extends object>(args: unknown): T {
 	return args as T;
 }
 
+const optionLetterDescription = "When single-select options are lettered, the result’s `optionOrder` maps each displayed letter to its one-based position in your original `options` array, and each selected answer includes its displayed `letter`.";
+
 export const askUserQuestionTool: AgentTool<typeof askInputSchema> = {
 	name: "ask_user_question",
 	label: "ask_user_question",
 	description:
-		"Ask the learner a single question and pause until they answer. NOT graded — there is no correct answer. " +
+		"Ask the learner a single question. NOT graded — there is no correct answer. " +
 		"Use when requirements are ambiguous, preferences are needed, a decision would materially affect the lesson, " +
-		"or you need an open-ended response. ONE question per turn: call a single ask_user_question, then end your " +
-		"turn — his answer determines the next.",
+		"or you need an open-ended response. " + optionLetterDescription,
 	parameters: askInputSchema,
 	prepareArguments: prepareQuestionArguments,
 	executionMode: "sequential",
@@ -152,15 +154,13 @@ function quizDescription(delta: { name: "quiz" | "probe"; nodeId: boolean; types
 		"choice so the learner can signal a genuine gap instead of guessing. An always-present optional thinking " +
 		"field lets the learner attach his reasoning to ANY answer; it reaches you only when non-empty. " +
 		"No free-text answers — for non-graded questions use ask_user_question instead. " +
+		optionLetterDescription + " " +
 		(delta.types
 			? "Every call declares `type` — the question's role in the teaching cycle; the field's own description says when each kind fires. "
 			: "") +
 		(delta.nodeId
 			? "Set `nodeId` (required) to the plan node this question is about — validated at call time against the session's plan map. For off-map checks use ask_user_question. "
-			: "") +
-		"ONE question per turn: call a single " +
-		delta.name +
-		", then end your turn — his answer determines the next.";
+			: "");
 	// Phase-correct shape: the teach example LEADS with the required pair
 	// (type, nodeId — the 2026-10-09 drop-order ruling); the probe example
 	// carries no phase metadata at all, exactly like the probe schema.
@@ -190,8 +190,7 @@ function explainDescription(name: "explain" | "recall", nodeId: boolean): string
 		"after seeing his words. He sees the committed answer on submit. " +
 		(nodeId
 			? "Set `nodeId` (required) to the plan node this question is about — validated at call time against the session's plan map. "
-			: "") +
-		"ONE question per turn: call a single " + name + ", then end your turn — his answer determines the next."
+			: "")
 	);
 }
 
@@ -220,7 +219,7 @@ export const probeQuizTool: AgentTool<typeof probeQuizInputSchema> = {
 /** The teacher's free-recall variant (nodeId-validated, same seam as the
  *  teach quiz — phases/plan recognize BOTH tool names). */
 export function teachExplainToolFor(
-	ctx: Pick<PlanToolContext, "chatId" | "chatStore">,
+	ctx: Pick<TeacherToolContext, "chatId" | "chatStore" | "jobStore">,
 ): AgentTool<typeof explainInputObject> {
 	return {
 		name: "explain",
@@ -231,8 +230,8 @@ export function teachExplainToolFor(
 		executionMode: "sequential",
 		execute: async (_toolCallId, input) => {
 			const problems = [...explainInputProblems(input)];
-			const nodeIdProblemText = nodeIdProblem(ctx, input.nodeId);
-			if (nodeIdProblemText) problems.push(nodeIdProblemText);
+			const tagProblemText = teachTagProblem(ctx, input.nodeId);
+			if (tagProblemText) problems.push(tagProblemText);
 			if (problems.length > 0) return invalidInputResult("explain", problems);
 			return questionResult();
 		},
@@ -352,7 +351,10 @@ export function createProberTools(
 
 /** The nodeId-against-live-tree check the teacher's quiz chains after the
  *  shared authoring contract (the old superRefine, verbatim). */
-function nodeIdProblem(ctx: Pick<PlanToolContext, "chatId" | "chatStore">, nodeId: string): string | null {
+export function teachTagProblem(
+	ctx: Pick<TeacherToolContext, "chatId" | "chatStore" | "jobStore">,
+	nodeId: string,
+): string | null {
 	const record = ctx.chatStore.getChat(ctx.chatId);
 	const known = record?.tree?.nodes.map((n) => n.id) ?? [];
 	if (!known.includes(nodeId)) {
@@ -362,6 +364,19 @@ function nodeIdProblem(ctx: Pick<PlanToolContext, "chatId" | "chatStore">, nodeI
 				? `Copy one of your plan_init slugs exactly (${known.slice(0, 5).join(", ")}${known.length > 5 ? ", …" : ""}).`
 				: "No plan map exists yet — call plan_init before posing quizzes.")
 		);
+	}
+	const tree = record!.tree!;
+	const units = tree.units;
+	if (!units) return null;
+	const cur = currentUnitIndex(tree, record!.messages ?? [])!;
+	const target = unitIndexOf(tree, nodeId)!;
+	if (target <= cur) return null;
+	if (target >= cur + 2) {
+		return `nodeId "${nodeId}" is in unit "${units[target]!.title}", but the next unit is "${units[cur + 1]!.title}". Units are taught in order — to skip "${units[cur + 1]!.title}", rewrite the plan with plan_init first (reorder or remove it).`;
+	}
+	const pending = ctx.jobStore.listJobs(ctx.chatId).find((j) => j.status === "running" || j.delivery?.status === "pending");
+	if (pending) {
+		return `A background job (${pending.kind}) from the current unit has not delivered yet — it still belongs to unit "${units[cur]!.title}". Tell the learner it belongs to this unit and that you will wait for it; move on to "${units[target]!.title}" once it has arrived.`;
 	}
 	return null;
 }
@@ -373,7 +388,7 @@ function nodeIdProblem(ctx: Pick<PlanToolContext, "chatId" | "chatStore">, nodeI
  *  nodeId is REQUIRED (owner ruling 2026-09-26): the untagged ad-hoc quiz is
  *  gone — off-map checks route through ask_user_question, and the teach
  *  seam (first tagged quiz) is structurally guaranteed. */
-export function teachQuizToolFor(ctx: Pick<PlanToolContext, "chatId" | "chatStore">): AgentTool<typeof quizInputObject> {
+export function teachQuizToolFor(ctx: Pick<TeacherToolContext, "chatId" | "chatStore" | "jobStore">): AgentTool<typeof quizInputObject> {
 	return {
 		name: "quiz",
 		label: "quiz",
@@ -383,8 +398,8 @@ export function teachQuizToolFor(ctx: Pick<PlanToolContext, "chatId" | "chatStor
 		executionMode: "sequential",
 		execute: async (_toolCallId, input) => {
 			const problems = [...quizInputProblems(input)];
-			const nodeIdProblemText = nodeIdProblem(ctx, input.nodeId);
-			if (nodeIdProblemText) problems.push(nodeIdProblemText);
+			const tagProblemText = teachTagProblem(ctx, input.nodeId);
+			if (tagProblemText) problems.push(tagProblemText);
 			if (problems.length > 0) return invalidInputResult("quiz", problems);
 			return questionResult();
 		},

@@ -28,11 +28,14 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { AGY_COMPACT_AT_BYTES, AGY_MAX_INPUT_BYTES, agyKeepRecentBytes, agyMessageBytes, antigravityRequestBytes, projectedAntigravityRequestBytes } from "../agent/antigravity/request.ts";
+import { ANTIGRAVITY_PROVIDER } from "../core/contracts/antigravity.ts";
 import type { Usage } from "@earendil-works/pi-ai";
 import {
 	activeCompactionOf,
 	buildCompactionPrompt,
 	compactionCutIndex,
+	compactionCutPoints,
 	COMPACTION_RESERVE_TOKENS,
 	estimateContextTokens,
 	estimateTokens,
@@ -46,10 +49,12 @@ import {
 	type LhMarkerMessage,
 } from "../core/index.ts";
 import { emit } from "../core/events.ts";
+import { newestLessonRecord, unitCutDue } from "../core/units.ts";
 import type { ChatStore } from "../core/ports.ts";
 import type { PiEngine } from "../agent/models.ts";
 import { runSubagent } from "../agent/subagents/pi-run.ts";
 import { isTurnRunning } from "./turn-liveness.ts";
+import { runUnitCut } from "./unit-cut.ts";
 
 /** The summarizer's system prompt — server-owned operational framing,
  *  not model-facing doctrine (buildCompactionPrompt carries the shape). */
@@ -62,7 +67,7 @@ const SUMMARIZER_SYSTEM_PROMPT =
 export type Summarizer = (prompt: string, engine: PiEngine) => Promise<{ summary: string; usage: Usage }>;
 
 /** The production summarizer over the sub-agent seam. */
-async function subagentSummarizer(prompt: string, engine: PiEngine): Promise<{ summary: string; usage: Usage }> {
+export async function subagentSummarizer(prompt: string, engine: PiEngine): Promise<{ summary: string; usage: Usage }> {
 	let usage: Usage = {
 		input: 0,
 		output: 0,
@@ -80,7 +85,6 @@ async function subagentSummarizer(prompt: string, engine: PiEngine): Promise<{ s
 		prompt,
 		engine,
 		systemPrompt: SUMMARIZER_SYSTEM_PROMPT,
-		maxTurns: 1,
 		// Operational work for the foreground conversation, not a worker task.
 		bypassWorkerRequestAdmission: true,
 		onUsage: (u) => {
@@ -118,6 +122,17 @@ export interface CompactionDeps {
 	/** The composed system prompt's token estimate (chars/4) — the
 	 *  projection the provider actually receives starts with it. */
 	systemPromptTokens: number;
+	/** A provider byte cap the token trigger cannot see (Antigravity): true
+	 * when the projected request is too large. Compacts like the token trigger. */
+	requestOverLimit?: (messages: readonly LhMessage[]) => boolean;
+	/** A provider byte cap on the SUMMARY request itself (Antigravity). When
+	 * the span's summary prompt would not fit, the span is summarized in
+	 * chained chunks: the oldest part that fits first, the rest after it. */
+	summaryRequestFits?: (prompt: string) => boolean;
+	/** A provider byte cap also sizes the kept tail (Antigravity): the cut
+	 * keeps `budget` worth of recent messages measured by `size`, instead of
+	 * KEEP_RECENT_TOKENS, so the compacted request lands under the trigger. */
+	keptTail?: (messages: readonly LhMessage[]) => { budget: number; size?: (message: LhMessage) => number };
 	/** Trigger against a prospective request without recording/summarizing
 	 * its new cargo. The cut and summary still use only saved history. */
 	projectMessages?: (record: ChatRecord) => readonly LhMessage[];
@@ -129,10 +144,25 @@ export interface CompactionDeps {
 
 interface CompactionState {
 	inFlight: Map<string, Promise<void>>;
+	/** The 1-based unit a running unit cut is summarizing, per chat. */
+	units: Map<string, number>;
 }
 const g = globalThis as typeof globalThis & { __lhCompaction?: CompactionState };
 function state(): CompactionState {
-	return (g.__lhCompaction ??= { inFlight: new Map() });
+	const s = (g.__lhCompaction ??= { inFlight: new Map(), units: new Map() });
+	return (s.units ??= new Map()), s;
+}
+
+/** The unit number while a unit cut runs for this chat (plan 001 part 8),
+ *  undefined for an ordinary compaction or none. */
+export function runningUnit(chatId: string): number | undefined {
+	return state().units.get(chatId);
+}
+
+/** Unit-cut bookkeeping: set when the summary starts, cleared (undefined) at its end. */
+export function setRunningUnit(chatId: string, unit: number | undefined): void {
+	if (unit === undefined) state().units.delete(chatId);
+	else state().units.set(chatId, unit);
 }
 
 /** Is a compaction running for this chat? (The client status event's
@@ -158,6 +188,39 @@ export function effectiveThresholdTokens(settingTokens: number | undefined, cont
 	return Math.min(setting, Math.max(contextWindowTokens - COMPACTION_RESERVE_TOKENS, 1));
 }
 
+/** Antigravity's byte trigger: agy cuts requests past 192,000 bytes from the
+ * end, which happens near ~71k tokens of lesson text — far below the token
+ * trigger. Other providers have no byte cap (undefined). Content the CLI
+ * cannot take never throws here; the stream reports it on the real request. */
+export function antigravityRequestTrigger(provider: string, instructions: string): CompactionDeps["requestOverLimit"] {
+	if (provider !== ANTIGRAVITY_PROVIDER) return undefined;
+	return (messages) => {
+		try {
+			return projectedAntigravityRequestBytes(toLlmMessages(messages as readonly AgentMessage[]), instructions) > AGY_COMPACT_AT_BYTES;
+		} catch {
+			return false;
+		}
+	};
+}
+
+/** Antigravity's kept tail: sized in replay bytes against the byte trigger,
+ * budgeting for a summary at least as large as the chat's prior one. */
+export function antigravityKeptTail(provider: string, instructions: string): CompactionDeps["keptTail"] {
+	if (provider !== ANTIGRAVITY_PROVIDER) return undefined;
+	return (messages) => {
+		const prior = activeCompactionOf(messages);
+		return { budget: agyKeepRecentBytes(instructions, prior ? Buffer.byteLength(prior.content) : 0), size: agyMessageBytes };
+	};
+}
+
+/** Antigravity's cap on the summary request itself: the summarizer sends its
+ * system prompt, no tools and the prompt as one user message (runSubagent). */
+export function antigravitySummaryFit(provider: string): (((prompt: string) => boolean) & { systemPrompt: string }) | undefined {
+	if (provider !== ANTIGRAVITY_PROVIDER) return undefined;
+	const fits = (prompt: string) => antigravityRequestBytes([{ role: "user", content: prompt, timestamp: 0 }], SUMMARIZER_SYSTEM_PROMPT) <= AGY_MAX_INPUT_BYTES;
+	return Object.assign(fits, { systemPrompt: SUMMARIZER_SYSTEM_PROMPT });
+}
+
 // ─── the estimate over the ACTIVE projection ────────────────────────────────
 
 /** The projected context estimate: what the next LLM call would carry.
@@ -180,25 +243,46 @@ export function projectedContextTokens(messages: readonly LhMessage[], systemPro
 // ─── the compaction run ─────────────────────────────────────────────────────
 
 /** Run one compaction for the chat (the registry mutex is HELD by the
- *  caller — ensureCompacted). Reads the record fresh, cuts, summarizes,
- *  inserts the marker after the summarized messages, records usage,
- *  notifies. Never throws upward past the registry cleanup. */
+ *  caller — ensureCompacted). A summary request too large for the provider
+ *  is split into chained passes; each partial pass advances the kept
+ *  boundary, so the loop ends. Never throws upward past the registry cleanup. */
 async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
+	while ((await compactPass(deps, chatId)) === "partial") { /* chain the next chunk */ }
+}
+
+/** What the registry runs: the unit cut if due (any outcome), then the
+ *  compaction passes — each pass re-checks the threshold itself, so a failed
+ *  cut falls back to compaction inside the old unit. */
+async function maintain(deps: CompactionDeps, chatId: string): Promise<void> {
+	await runUnitCut(deps, chatId);
+	await compact(deps, chatId);
+}
+
+function unitCutDueFor(record: ChatRecord): boolean {
+	return record.tree ? unitCutDue(record.tree, record.messages) : false;
+}
+
+/** One summary + marker. Reads the record fresh, cuts, summarizes, inserts
+ *  the marker after the summarized messages, records usage, notifies.
+ *  "partial" means only the oldest chunk of the span fit one request. */
+async function compactPass(deps: CompactionDeps, chatId: string): Promise<"done" | "partial"> {
 	// The actual start seam, shared by preflight, background, and manual
 	// callers. An earlier request check is insufficient: a competing answer
 	// may claim ownership while ensureCompacted awaits the structural gate.
 	// There is no await between this check and starting the summary; an
 	// already-running compaction is still awaited by every preflight.
-	if (isTurnRunning(chatId)) return;
+	if (isTurnRunning(chatId)) return "done";
 	const record = deps.chatStore.getChat(chatId);
-	if (!record) return;
+	if (!record) return "done";
 	const messages = record.messages;
 	const model = deps.includeReasoning ? deps.engine.model : undefined;
-	const tokensBefore = projectedContextTokens(deps.projectMessages?.(record) ?? messages, deps.systemPromptTokens, model);
-	if (tokensBefore <= deps.thresholdTokens) return; // settled beneath while we waited
+	const projected = deps.projectMessages?.(record) ?? messages;
+	const tokensBefore = projectedContextTokens(projected, deps.systemPromptTokens, model);
+	if (tokensBefore <= deps.thresholdTokens && !deps.requestOverLimit?.(projected)) return "done"; // settled beneath while we waited
 
-	const cut = compactionCutIndex(messages, undefined, model);
-	if (cut <= 0 || cut >= messages.length) return; // no history can be dropped
+	const tail = deps.keptTail?.(messages);
+	const cut = compactionCutIndex(messages, tail?.budget, model, tail?.size);
+	if (cut <= 0 || cut >= messages.length) return "done"; // no history can be dropped
 
 	// The previous compaction's kept boundary (chained compactions
 	// summarize the old summary + what rode after it).
@@ -214,40 +298,58 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 		console.info(
 			`[chat ${chatId}] compaction skipped — the kept tail alone exceeds the threshold (raise it or shrink the tail)`,
 		);
-		return;
+		return "done";
 	}
 
 	// The span: from the PREVIOUS kept boundary through the cut.
-	let spanStart = 0;
+	// Never across a unit cut: with a lesson record the span starts at its kept
+	// message or the in-unit compaction's kept boundary, whichever is later.
+	const lessonRecord = newestLessonRecord(messages);
+	const recordKept = lessonRecord ? messages.findIndex((m) => m.id === lessonRecord.details.firstKeptMessageId) : -1;
+	if (lessonRecord && cut <= recordKept) return "done"; // no cut candidate after the record
+	let spanStart = Math.max(0, recordKept);
 	let priorSummary: string | null = null;
-	if (previous && prevKept > 0) {
+	if (previous && prevKept > 0 && prevKept >= recordKept) {
 		spanStart = prevKept;
 		priorSummary = previous.content;
 	}
-	const span = messages.slice(spanStart, cut);
-	// The separately supplied prior summary replaces all summary markers
-	// in this span. Without a resolved prior boundary, retain the existing
-	// legacy fallback rather than silently discarding summary-only context.
-	const summaryMessages = priorSummary
-		? span.filter((m) => m.role !== "custom" || m.customType !== "compaction")
-		: span;
-	const spanText = serializeForSummary(summaryMessages);
-	const fullSpan = priorSummary ? `[SYSTEM NOTE — prior compaction summary, still authoritative where not superseded]\n${priorSummary}\n\n${spanText}` : spanText;
+	const planTreeText = lessonRecord ? null : planTreeToText(record.tree, messages);
+	const promptFor = (end: number) => {
+		const span = messages.slice(spanStart, end).filter((m) => m.role !== "custom" || m.customType !== "lesson-record");
+		// The separately supplied prior summary replaces all summary markers
+		// in this span. Without a resolved prior boundary, retain the existing
+		// legacy fallback rather than silently discarding summary-only context.
+		const summaryMessages = priorSummary
+			? span.filter((m) => m.role !== "custom" || m.customType !== "compaction")
+			: span;
+		const spanText = serializeForSummary(summaryMessages);
+		const fullSpan = priorSummary ? `[SYSTEM NOTE — prior compaction summary, still authoritative where not superseded]\n${priorSummary}\n\n${spanText}` : spanText;
+		return buildCompactionPrompt({ spanText: fullSpan, planTreeText, kind: deps.kind, afterRecord: lessonRecord !== null });
+	};
 
-	const prompt = buildCompactionPrompt({
-		spanText: fullSpan,
-		planTreeText: planTreeToText(record.tree, messages),
-		kind: deps.kind,
-	});
+	// Too large for one summary request: keep more verbatim this pass (the
+	// latest valid cut whose span fits); the next pass chains the rest.
+	let keep = cut;
+	let prompt = promptFor(cut);
+	if (deps.summaryRequestFits && !deps.summaryRequestFits(prompt)) {
+		const earlier = compactionCutPoints(messages, spanStart).filter((point) => point < cut).reverse();
+		const fitting = earlier.find((point) => deps.summaryRequestFits!(promptFor(point)));
+		if (fitting === undefined) {
+			console.info(`[chat ${chatId}] compaction skipped — not even the oldest turn fits one summary request`);
+			return "done";
+		}
+		keep = fitting;
+		prompt = promptFor(fitting);
+	}
 
 	emit("compaction-changed", { chatId, running: true });
 	try {
 		const summarize = deps.summarize ?? subagentSummarizer;
 		const { summary, usage } = await summarize(prompt, deps.engine);
 		const trimmed = summary.trim();
-		if (!trimmed) return; // an empty summary is a refusal artifact — leave the record honest
+		if (!trimmed) return "done"; // an empty summary is a refusal artifact — leave the record honest
 
-		const firstKept = messages[cut]!;
+		const firstKept = messages[keep]!;
 		const details: CompactionDetails = {
 			firstKeptMessageId: firstKept.id,
 			tokensBefore,
@@ -284,6 +386,7 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 		// Notify-then-fetch: the record gained the marker (the client's
 		// dividers appear) and the status event ends the send gate.
 		emit("record-changed", { chatId });
+		return keep < cut ? "partial" : "done";
 	} catch (err) {
 		// A failed compaction leaves the record untouched — the next
 		// turn-start gate retries (the same self-healing law as the
@@ -292,6 +395,7 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 	} finally {
 		emit("compaction-changed", { chatId, running: false });
 	}
+	return "done";
 }
 
 /**
@@ -318,13 +422,14 @@ export async function ensureCompacted(deps: CompactionDeps, chatId: string): Pro
 	const record = deps.chatStore.getChat(chatId);
 	if (!record) return;
 	const model = deps.includeReasoning ? deps.engine.model : undefined;
-	if (projectedContextTokens(deps.projectMessages?.(record) ?? record.messages, deps.systemPromptTokens, model) <= deps.thresholdTokens) return;
+	const projected = deps.projectMessages?.(record) ?? record.messages;
+	if (!unitCutDueFor(record) && projectedContextTokens(projected, deps.systemPromptTokens, model) <= deps.thresholdTokens && !deps.requestOverLimit?.(projected)) return;
 	const admitted = state().inFlight.get(chatId);
 	if (admitted) {
 		await admitted;
 		return;
 	}
-	const run = compact(deps, chatId);
+	const run = maintain(deps, chatId);
 	state().inFlight.set(chatId, run);
 	try {
 		await run;
@@ -347,8 +452,8 @@ export function kickCompaction(buildDeps: () => CompactionDeps | null, chatId: s
 	if (!deps || deps.canStart?.() === false) return;
 	const record = deps.chatStore.getChat(chatId);
 	if (!record) return;
-	if (projectedContextTokens(record.messages, deps.systemPromptTokens, deps.includeReasoning ? deps.engine.model : undefined) <= deps.thresholdTokens) return;
-	const run = compact(deps, chatId);
+	if (!unitCutDueFor(record) && projectedContextTokens(record.messages, deps.systemPromptTokens, deps.includeReasoning ? deps.engine.model : undefined) <= deps.thresholdTokens && !deps.requestOverLimit?.(record.messages)) return;
+	const run = maintain(deps, chatId);
 	state().inFlight.set(chatId, run);
 	void run.finally(() => {
 		if (state().inFlight.get(chatId) === run) state().inFlight.delete(chatId);

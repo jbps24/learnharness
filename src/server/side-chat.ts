@@ -13,11 +13,13 @@ import {
 import { collectCitations } from "../core/citations.ts";
 import { COMPACTION_RESERVE_TOKENS } from "../core/compaction.ts";
 import { resolveSideQuestionSpec } from "../core/settings-resolution.ts";
+import { ANTIGRAVITY_PROVIDER } from "../core/contracts/antigravity.ts";
+import { AGY_MAX_INPUT_BYTES, antigravityRequestBytes, antigravitySideTooLargeMessage } from "../agent/antigravity/request.ts";
 import { modelsNotConfigured, providerKeyMissing as providerKeyMissingEnvelope } from "../core/settings.ts";
 import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
 import { isSubscriptionProvider } from "../agent/subscription-connections.ts";
 import { usageWasAdmitted } from "../agent/subscription-request-cycle.ts";
-import { composeSideChatInstructions, streamSideAnswer } from "../agent/side-chat.ts";
+import { composeSideChatInstructions, sideAnswerMessages, streamSideAnswer } from "../agent/side-chat.ts";
 import { effectiveSettings, stores } from "./stores.ts";
 import { providerKeyPresent } from "./keys.ts";
 import { refreshConnectionCatalog } from "./model-catalog.ts";
@@ -179,6 +181,11 @@ export function createSideChatService(deps: SideChatDeps): SideChatService {
 		const estimatedTokens = Math.ceil((instructions.length + turns.reduce((sum, turn) => sum + turn.text.length, 0)) / 4);
 		if (engine.model.contextWindow > 0 && estimatedTokens > Math.max(1, engine.model.contextWindow - Math.min(COMPACTION_RESERVE_TOKENS, engine.model.maxTokens))) {
 			return Response.json({ error: "This side conversation and lesson exceed the selected model's context window. Select a model with a larger context window." }, { status: 400 });
+		}
+		// agy cuts requests past its byte cap from the end; refuse instead.
+		if (engine.model.provider === ANTIGRAVITY_PROVIDER) {
+			const bytes = antigravityRequestBytes(sideAnswerMessages(turns, engine.model), instructions);
+			if (bytes > AGY_MAX_INPUT_BYTES) return Response.json({ error: antigravitySideTooLargeMessage(bytes) }, { status: 400 });
 		}
 		const stored = deps.chatStore.updateSideChats(chatId, (current) => current.some((entry) => entry.id === thread.id)
 			? current.map((entry) => entry.id === thread.id ? thread : entry) : [...current, thread]);

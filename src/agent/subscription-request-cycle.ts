@@ -117,25 +117,26 @@ export class SubscriptionRequestCycle implements SubscriptionDispatchLifecycle {
  acceptsUsage(_message: AssistantMessage): boolean { return this.committed; }
  private resolveFirst(value: boolean) { if (!this.firstResolved) { this.firstResolved = true; this.resolveAdmission(value); } }
  finishNativeCycle(settledMessages: readonly AgentMessage[] = this.snapshot): { action: "settle" | "resumeForeground"; messages: AgentMessage[] } {
+  const uncommittedStaged = this.stagedCommitted ? new Set<string>() : new Set((this.options.staged ?? []).map(idOf).filter((id): id is string => !!id));
   if (this.localRejection) {
-   const messages = settledMessages.filter((m) => !this.automatic.has(idOf(m) ?? "") && !this.rejectedContextIds.has(idOf(m) ?? ""));
+   const messages = settledMessages.filter((m) => !this.automatic.has(idOf(m) ?? "") && !uncommittedStaged.has(idOf(m) ?? "") && !this.rejectedContextIds.has(idOf(m) ?? ""));
    const retainedIds = new Set(messages.map(idOf).filter((id): id is string => !!id));
    this.options.restoreAutomatic(this.automatic, retainedIds);
    this.resolveFirst(this.anyDispatch);
    for (const event of this.held) {
     if ((event.type === "message_start" || event.type === "message_end" || event.type === "message_update") &&
-     (this.automatic.has(idOf(event.message) ?? "") || this.rejectedContextIds.has(idOf(event.message) ?? ""))) continue;
+     (this.automatic.has(idOf(event.message) ?? "") || uncommittedStaged.has(idOf(event.message) ?? "") || this.rejectedContextIds.has(idOf(event.message) ?? ""))) continue;
     this.release?.(event);
    }
    this.held = [];
    return { action: "settle", messages };
   }
   if (!this.denied) { this.resolveFirst(this.anyDispatch); return { action: "settle", messages: [] }; }
-  const messages = this.snapshot.filter((m) => !this.automatic.has(idOf(m) ?? ""));
+  const messages = this.snapshot.filter((m) => !this.automatic.has(idOf(m) ?? "") && !uncommittedStaged.has(idOf(m) ?? ""));
   const retainedIds = new Set(messages.map(idOf).filter((id): id is string => !!id));
   this.options.restoreAutomatic(this.automatic, retainedIds);
   this.resolveFirst(false); // queue deferral is installed before initial fire cargo returns
-  this.held = this.held.filter((e) => (e.type === "turn_start") || ((e.type === "message_start" || e.type === "message_end") && e.message.role !== "assistant" && !this.automatic.has(idOf(e.message) ?? "")));
+  this.held = this.held.filter((e) => (e.type === "turn_start") || ((e.type === "message_start" || e.type === "message_end") && e.message.role !== "assistant" && !this.automatic.has(idOf(e.message) ?? "") && !uncommittedStaged.has(idOf(e.message) ?? "")));
   const retry = this.denied === "background" && !this.userAborted && !this.resumed && this.foregroundOwed && !!this.scope && this.options.scopeCurrent(this.scope);
   if (retry) {
    this.resumed = true; this.options.purpose.background = false;

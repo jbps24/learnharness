@@ -56,10 +56,10 @@ import { sideChats, type SideChatService } from "./side-chat.ts";
 import { SIDE_CONTEXT_BUDGET_ERROR, sideBudgetRetryDrops, sideContextWindow } from "./side-context-budget.ts";
 import { registerTurn, rememberTurnFailure, unregisterTurn } from "./turn-runs.ts";
 import { persistTurn, triggerExtraction, TurnPersistenceError } from "./turn-service.ts";
-import { hasProbeDone, hasUnresolvedQuestion, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
+import { hasProbeDone, hasUnresolvedQuestion, newUnitsNoteMessage, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
 import { samePluginQuestionOccurrence } from "../core/plugin-questions.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
-import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight } from "./compaction.ts";
+import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight, antigravityRequestTrigger, antigravitySummaryFit, antigravityKeptTail } from "./compaction.ts";
 import { COMPACTION_RESERVE_TOKENS } from "../core/compaction.ts";
 import { catalogContextLimits, refreshConnectionCatalog } from "./model-catalog.ts";
 import { emit } from "../core/events.ts";
@@ -365,7 +365,8 @@ export async function handleChatInput(
 	const modelIdForCompaction = `${conversationEngine.model.provider}:${conversationEngine.model.id}`;
 	const contextWindow = catalogContextLimits().get(modelIdForCompaction);
 	const thresholdTokens = effectiveThresholdTokens(effective.compaction?.thresholdTokens, contextWindow);
-	const systemPromptTokens = Math.ceil(composeInstructions(record.kind === "practice" ? "practice" : "teacher").length / 4);
+	const instructions = composeInstructions(record.kind === "practice" ? "practice" : "teacher");
+	const systemPromptTokens = Math.ceil(instructions.length / 4);
 	const estimateModel = effective.compaction.includeReasoning ? conversationEngine.model : undefined;
 	const fitsSideContext = (messages: readonly LhMessage[]) => {
 		const live = messages.filter((message) => (message as { role: string }).role !== "system");
@@ -394,6 +395,9 @@ export async function handleChatInput(
 			includeReasoning: effective.compaction.includeReasoning,
 			thresholdTokens,
 			systemPromptTokens,
+			requestOverLimit: antigravityRequestTrigger(conversationEngine.model.provider, instructions),
+			keptTail: antigravityKeptTail(conversationEngine.model.provider, instructions),
+			summaryRequestFits: antigravitySummaryFit(compactionEngine.model.provider),
 			projectMessages: (current) => {
 				try {
 					if (input.type === "plugin-question-answer" || input.type === "plugin-problem-submission") {
@@ -577,6 +581,14 @@ export async function handleChatInput(
 	// refusal. This snapshot does not authorize the final assembled request;
 	// SDK preparation re-collects live text and validates queued steering too.
 	const sideContextSnapshots = sideContext.snapshot(chatId);
+	// Plan 001 part 6: a teaching lesson whose plan has no units gets the
+	// one-time grouping note in the same write-ahead as the turn's input.
+	if (
+		appends.length > 0 && input.type !== "retry" && record.kind !== "practice"
+		&& hasProbeDone(record.messages)
+		&& record.tree && record.tree.nodes.length >= 1 && !record.tree.units
+		&& !record.messages.some((m) => m.role === "custom" && m.customType === "units-note")
+	) appends = [...appends, newUnitsNoteMessage()];
 	const afterInput = [...record.messages, ...appends];
 	const sideQuestions = hasUnresolvedQuestion(afterInput) ? [] : sideConversationEntries({
 		messages: record.messages, sideChats: sideContextSnapshots,
@@ -933,6 +945,7 @@ export async function handleChatInput(
 						const kickModelId = `${kickEngine.model.provider}:${kickEngine.model.id}`;
 						const freshRecord = stores.chatStore.getChat(chatId);
 						if (!freshRecord) return null;
+						const kickInstructions = composeInstructions(freshRecord.kind === "practice" ? "practice" : "teacher");
 						return {
 							chatStore: stores.chatStore,
 							engine: kickEngine,
@@ -944,7 +957,10 @@ export async function handleChatInput(
 								fresh.compaction?.thresholdTokens,
 								catalogContextLimits().get(kickModelId),
 							),
-							systemPromptTokens: Math.ceil(composeInstructions(freshRecord.kind === "practice" ? "practice" : "teacher").length / 4),
+							systemPromptTokens: Math.ceil(kickInstructions.length / 4),
+							requestOverLimit: antigravityRequestTrigger(kickEngine.model.provider, kickInstructions),
+							keptTail: antigravityKeptTail(kickEngine.model.provider, kickInstructions),
+							summaryRequestFits: antigravitySummaryFit(kickEngine.model.provider),
 						};
 					}, chatId);
 			},

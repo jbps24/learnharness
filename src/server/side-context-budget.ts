@@ -36,6 +36,6 @@ export function sideBudgetRetryDrops(before: readonly LhMessage[], after: readon
 	const latestFailure = before.findLast((message) => omitted.has(message.id));
 	if (latestFailure?.role !== "assistant" || latestFailure.errorMessage !== SIDE_CONTEXT_BUDGET_ERROR) return undefined;
 	if (after.length < before.length || before.some((message, index) => message.id !== after[index]?.id)) return undefined;
-	if (!after.slice(before.length).every((message) => message.role === "custom" && message.customType === "compaction")) return undefined;
+	if (!after.slice(before.length).every((message) => message.role === "custom" && (message.customType === "compaction" || message.customType === "lesson-record"))) return undefined;
 	return omitted;
 }

@@ -1,9 +1,13 @@
 /**
  * The SIDE-QUESTION model call: #487's tool-less streamed generation,
- * using the session's conversation model. No agent loop, no tools, no
- * session identity — a Claude Code
- * call without a session id never retains or reuses the lesson's live
- * CLI process (docs/claude-code.md "Questions, reuse, and cancellation").
+ * using the session's conversation model. No agent loop, no tools, and no
+ * Claude Code session identity — a Claude Code call without a session id
+ * never retains or reuses the lesson's live CLI process
+ * (docs/claude-code.md "Questions, reuse, and cancellation"). Every other
+ * provider gets the chat id: pi-ai only adds OpenCode's required
+ * `x-opencode-session` routing header when the request carries a session
+ * id, so omitting it fails OpenCode Go side questions with 400
+ * MissingSessionID before any token is used.
  *
  * Instructions: the side-chat base, then the curated shared appendix the
  * practice agent also composes (voice, accuracy, formatting — one law
@@ -19,6 +23,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { normalizeContext, type AssistantMessage, type Message, type Usage } from "@earendil-works/pi-ai";
 import { backgroundCaptureStream, createBackgroundCapture } from "./background-capture.ts";
+import { CLAUDE_CODE_PROVIDER } from "./claude-code/constants.ts";
 import { providerEventObserver } from "./provider-events.ts";
 import { PATHS } from "../../config.ts";
 import type { SideModelTurn } from "../core/side-chat.ts";
@@ -72,6 +77,26 @@ function textOf(message: AssistantMessage): string {
 		.join("");
 }
 
+/** The side helper's model-facing messages: the exact list streamSideAnswer
+ * sends, shared with admission checks that must measure the real request. */
+export function sideAnswerMessages(turns: readonly SideModelTurn[], model: PiEngine["model"]): Message[] {
+	const now = Date.now();
+	return turns.map((turn) =>
+		turn.role === "user"
+			? { role: "user", content: turn.text, timestamp: now }
+			: ({
+					role: "assistant",
+					content: [{ type: "text", text: turn.text }],
+					api: model.api,
+					provider: model.provider,
+					model: model.id,
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+					stopReason: "stop",
+					timestamp: now,
+				} as AssistantMessage),
+	);
+}
+
 /**
  * Stream one side answer. `onText` receives the FULL text so far on every
  * text delta (replace, never append — the same slot discipline as the
@@ -88,29 +113,20 @@ export async function streamSideAnswer(opts: {
 	chatId?: string;
 	runId?: string;
 }): Promise<SideAnswerResult> {
-	const now = Date.now();
-	const messages: Message[] = opts.turns.map((turn) =>
-		turn.role === "user"
-			? { role: "user", content: turn.text, timestamp: now }
-			: ({
-					role: "assistant",
-					content: [{ type: "text", text: turn.text }],
-					api: opts.engine.model.api,
-					provider: opts.engine.model.provider,
-					model: opts.engine.model.id,
-					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-					stopReason: "stop",
-					timestamp: now,
-				} as AssistantMessage),
-	);
+	const messages = sideAnswerMessages(opts.turns, opts.engine.model);
 	let text = "";
 	let failure: unknown;
 	const capture = createBackgroundCapture({ role: "sideQuestion", runId: opts.runId ?? randomUUID(), sourceId: opts.chatId });
 	const providerEvents = opts.chatId ? providerEventObserver(opts.chatId, "sideQuestion") : undefined;
+	// OpenCode Go rejects requests without `x-opencode-session`; pi-ai derives
+	// it from this option. Claude Code treats it as a live process to resume,
+	// which a side question must never do.
+	const sessionId = opts.chatId && opts.engine.model.provider !== CLAUDE_CODE_PROVIDER ? opts.chatId : undefined;
 	try {
 		const stream = backgroundCaptureStream(opts.engine.streamFn, capture)(opts.engine.model, normalizeContext({ systemPrompt: opts.instructions, messages, tools: [] }), {
 			signal: opts.signal,
 			reasoning: opts.engine.level === "off" ? undefined : opts.engine.level,
+			...(sessionId ? { sessionId } : {}),
 			...(providerEvents ? { onProviderStreamEvent: providerEvents } : {}),
 		});
 		for await (const event of stream) {
