@@ -48,6 +48,7 @@ const { runSubagent } = await import("../src/agent/subagents/pi-run.ts");
 const { persistTurn } = await import("../src/server/turn-service.ts");
 const { runPiTurn } = await import("../src/server/pi/ui-stream.ts");
 const { SessionModel } = await import("../components/session-core.ts");
+const { BREAK_DEFAULTS } = await import("../src/core/settings.ts");
 const { chatStore } = await import("../src/store/chats.ts");
 const { jobStore } = await import("../src/store/jobs.ts");
 
@@ -61,7 +62,7 @@ function scripted(provider: string, id: string, steps: FauxResponseStep[] = []) 
 const chatId = chatStore.createChat("Synthetic output gate").id;
 const factories = {
 	prober: (opts: AgentBuildOptions) => createProberAgent({ chatId, chatStore, jobStore, deliver: () => {}, spawn: () => {} }, opts),
-	teacher: (opts: AgentBuildOptions) => createTeacherAgent({ chatId, chatStore, jobStore, spawn: () => {} }, opts),
+	teacher: (opts: AgentBuildOptions) => createTeacherAgent({ chatId, chatStore, jobStore, spawn: () => {}, breaks: () => ({ ...BREAK_DEFAULTS }), now: () => 0 }, opts),
 	practice: (opts: AgentBuildOptions) => createPracticeAgent({ chatId, chatStore }, opts),
 };
 

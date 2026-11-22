@@ -27,6 +27,7 @@ import type { ModelRole } from "../../config.ts";
 import type { ChatSettings } from "./contracts/chat.ts";
 import type { SearchEngineId } from "./search.ts";
 import {
+	BREAK_DEFAULTS,
 	BACKGROUND_MODEL_ROLES,
 	FACTORY_SETTINGS,
 	MODEL_SLOTS,
@@ -99,6 +100,7 @@ export interface EffectiveSettings {
 	/** Compaction (owner round 14): resolved concrete — absent record
 	 *  section resolves to the factory 150k. */
 	compaction: Required<CompactionSettings>;
+	breaks: { enabled: boolean; intervalMinutes: number; lengthMinutes: number; resetMinutes: number };
 	/** Custom endpoint, resolved concrete: baseUrl defaults "", models and
 	 *  user pins default to empty. */
 	customProvider: { baseUrl: string; models: CustomModel[]; overrides: Record<string, CustomModelOverride>; manualModels: string[] };
@@ -247,6 +249,12 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 		compaction: {
 			thresholdTokens: record?.compaction?.thresholdTokens ?? FACTORY_SETTINGS.compaction.thresholdTokens,
 			includeReasoning: record?.compaction?.includeReasoning ?? FACTORY_SETTINGS.compaction.includeReasoning,
+		},
+		breaks: {
+			enabled: record?.breaks?.enabled ?? BREAK_DEFAULTS.enabled,
+			intervalMinutes: record?.breaks?.intervalMinutes ?? BREAK_DEFAULTS.intervalMinutes,
+			lengthMinutes: record?.breaks?.lengthMinutes ?? BREAK_DEFAULTS.lengthMinutes,
+			resetMinutes: record?.breaks?.resetMinutes ?? BREAK_DEFAULTS.resetMinutes,
 		},
 		customProvider: {
 			baseUrl: record?.customProvider?.baseUrl ?? "",

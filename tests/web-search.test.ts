@@ -259,6 +259,7 @@ describe("keyless research dispatch (jobTools)", () => {
 
 import { createProberTools, createTeacherTools } from "../src/agent/tools.ts";
 import type { ChatStore } from "../src/core/ports.ts";
+import { BREAK_DEFAULTS } from "../src/core/settings.ts";
 
 /** A chat-store stub — the registry factories only CLOSE OVER it at build
  *  time (quiz/plan superRefines read it at execute time, never here). */
@@ -268,6 +269,7 @@ const fakeChatStore = {
 } as unknown as ChatStore;
 
 const ctxBase = { chatId: "chat-gate-test", chatStore: fakeChatStore };
+const teacherBreaks = { breaks: () => ({ ...BREAK_DEFAULTS }), now: () => 1_000_000 };
 
 describe("keyless role registries", () => {
 	it("createTeacherTools: unavailable keeps research on the live wiring path", () => {
@@ -276,6 +278,7 @@ describe("keyless role registries", () => {
 			jobStore: fakeJobStore(),
 			spawn: () => {},
 			searchAvailable: () => false,
+			...teacherBreaks,
 		});
 		assert.ok(tools.research, "no search key is required to dispatch research");
 		assert.ok(tools.demo && tools.visual && tools.pdf, "the other job tools survive");
@@ -287,6 +290,7 @@ describe("keyless role registries", () => {
 			jobStore: fakeJobStore(),
 			spawn: () => {},
 			searchAvailable: () => true,
+			...teacherBreaks,
 		});
 		assert.ok(tools.research, "a keyed server exposes research through the teacher");
 	});
@@ -323,7 +327,7 @@ describe("keyless role registries", () => {
 
 	it("createTeacherTools: the user toggle still drops research without search keys", () => {
 		const tools = createTeacherTools(
-			{ ...ctxBase, jobStore: fakeJobStore(), spawn: () => {}, searchAvailable: () => false },
+			{ ...ctxBase, jobStore: fakeJobStore(), spawn: () => {}, searchAvailable: () => false, ...teacherBreaks },
 			{ research: false },
 		);
 		assert.equal("research" in tools, false);

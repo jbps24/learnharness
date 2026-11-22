@@ -113,6 +113,9 @@ import {
 } from "@/components/compaction-divider";
 import { CoverageRing } from "@/components/extraction-coverage";
 import { Button } from "@/components/ui/button";
+import { BreakDivider, type BreakDividerData } from "@/components/break-divider";
+import { BreakScreen } from "@/components/break-screen";
+import { BREAK_DEFAULTS, resolveSettings, breakTimings, learningClock, learningMinutes, dividerState } from "@/src/core";
 import {
 	activeProblemOf,
 	pendingQuestionOf,
@@ -1122,6 +1125,69 @@ export function Chat({
 	// recovers from it. Later compaction requires new input instead.
 	const retryable = !pluginOwnsDock && (status === "ready" || status === "error") && !busy && !compacting && endsInFailedTurn(nativeMessages);
 	const retryFailedTurn = () => retryFailedResponse(send, draftRef);
+
+	// Learning breaks (plan 002 part 6): Take/Skip are silent appends through
+	// the break route; Continue is a chat input that composes the teacher turn.
+	const [breakSettings, setBreakSettings] = useState<{ intervalMinutes: number; lengthMinutes: number; resetMinutes: number }>(BREAK_DEFAULTS);
+	const breakLengthMinutes = breakSettings.lengthMinutes;
+	useEffect(() => {
+		fetch("/api/settings")
+			.then((r) => r.json() as Promise<{ settings: Parameters<typeof resolveSettings>[0] }>)
+			.then((body) => {
+				const { intervalMinutes, lengthMinutes, resetMinutes } = resolveSettings(body.settings).breaks;
+				setBreakSettings({ intervalMinutes, lengthMinutes, resetMinutes });
+			})
+			.catch(() => {});
+	}, []);
+	// The learning clock under the composer (plan 002 part 9): recomputed every
+	// 15 s and on every transcript change.
+	const [clockTick, setClockTick] = useState(0);
+	// Not shown until after mount, so the server render and hydration agree.
+	const [clockMounted, setClockMounted] = useState(false);
+	useEffect(() => {
+		setClockMounted(true);
+		const id = setInterval(() => setClockTick((n) => n + 1), 15_000);
+		return () => clearInterval(id);
+	}, []);
+	const learningMinutesNow = useMemo(
+		() =>
+			clockMounted
+				? learningMinutes(learningClock(nativeMessages, sideThread.threads, breakTimings(breakSettings), Date.now(), { turnRunning: localStream || turnInFlight }))
+				: undefined,
+		[nativeMessages, sideThread.threads, breakSettings, clockTick, clockMounted, localStream, turnInFlight],
+	);
+	const breakAway = useMemo(
+		() =>
+			clockMounted && kind !== "practice"
+				? learningClock(nativeMessages, sideThread.threads, breakTimings(breakSettings), Date.now(), { turnRunning: localStream || turnInFlight }).awayMs !== null
+				: false,
+		[nativeMessages, sideThread.threads, breakSettings, clockTick, clockMounted, kind, localStream, turnInFlight],
+	);
+	const [breakPosting, setBreakPosting] = useState(false);
+	const [breakError, setBreakError] = useState<string | undefined>();
+	const answerBreak = async (type: "take" | "skip", toolCallId: string) => {
+		setBreakPosting(true);
+		setBreakError(undefined);
+		try {
+			const res = await fetch(`/api/chats/${chatId}/break`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ input: { type, toolCallId } }),
+			});
+			if (!res.ok) {
+				const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+				setBreakError(typeof body?.error === "string" && body.error ? body.error : "Couldn't reach the app. Try again.");
+			}
+			await reconcile();
+		} catch {
+			setBreakError("Couldn't reach the app. Try again.");
+		} finally {
+			setBreakPosting(false);
+		}
+	};
+	const newestBreak = messages
+		.flatMap((m) => m.parts.filter((p) => p.type === "data-break"))
+		.at(-1)?.data as BreakDividerData | undefined;
 	const sendAllowed = !pluginOwnsDock && reconciliation === "ready" && !pending && !activeProblem && !compacting && !submissionRunner.occupied;
 	const pendingTextTarget = textTarget();
 	const pendingTextInput = !!pendingTextTarget && !!pluginManager?.hasPendingSubmissionInput(pendingTextTarget);
@@ -1817,6 +1883,19 @@ export function Chat({
 												return <CompactionCutDivider key={pi} data={part.data as CompactionDividerData} />;
 											case "data-unit-cut":
 												return <UnitCutDivider key={pi} data={part.data as UnitCutDividerData} />;
+											case "data-break": {
+												const data = part.data as BreakDividerData;
+												return (
+													<BreakDivider
+														key={pi}
+														data={{ ...data, state: dividerState(data.state, breakAway), lengthMinutes: data.lengthMinutes ?? breakLengthMinutes }}
+														busy={busy || breakPosting}
+														error={breakError}
+														onTake={() => { void answerBreak("take", data.toolCallId); }}
+														onSkip={() => { void answerBreak("skip", data.toolCallId); }}
+													/>
+												);
+											}
 											case "data-plugin-problem-submission": {
 												const submitted = readPluginProblemSubmission(part.data);
 												return <PluginProblemSubmitted key={pi} data={part.data} snapshot={submitted ? pluginProblemById(nativeMessages, submitted.problemId) : null} chatId={chatId} />;
@@ -2108,6 +2187,7 @@ export function Chat({
 					contextTokens={contextTokens}
 					cliContextWindow={cliContextWindowOf(nativeMessages)}
 					pricing={pricing}
+					learningMinutes={kind === "practice" ? undefined : learningMinutesNow}
 					onReserve={setDockReserve}
 					dictationSlot={<DictationBar dictation={dictation} disabled={pluginOwnsDock && !pluginMicAvailable} />}
 					dictationCancel={dictation.cancel}
@@ -2245,6 +2325,13 @@ export function Chat({
 					/>
 				)}
 				</SurfaceRegion>
+				{newestBreak?.state === "taken" && newestBreak.takenAt !== undefined && newestBreak.lengthMinutes !== undefined && (
+					<BreakScreen
+						takenAt={newestBreak.takenAt}
+						lengthMinutes={newestBreak.lengthMinutes}
+						onContinue={() => { void send({ type: "break-continue", toolCallId: newestBreak.toolCallId }); }}
+					/>
+				)}
 				<AbortTurnDialog mode={abortAsk} onClose={closeAbortAsk} onConfirm={confirmAbort} busy={busy} />
 				</div>
 			</div>
@@ -2428,6 +2515,7 @@ export function DockOverlay({
 	onReserve,
 	plan,
 	onOpenPlan,
+	learningMinutes,
 	dictationSlot,
 	dictationCancel,
 	setupCta,
@@ -2495,6 +2583,8 @@ export function DockOverlay({
 	plan?: React.ReactNode;
 	/** Opens the full-DAG popup (the marginalia + chip share it). */
 	onOpenPlan: () => void;
+	/** The learning clock in whole minutes (plan 002 part 9); teaching chats only. */
+	learningMinutes?: number;
 	/** The dictation strip (STT wave): rendered in the stats bar's middle
 	 *  slot — the mic button + live meter (components/dictation.tsx). */
 	dictationSlot?: React.ReactNode;
@@ -3027,6 +3117,7 @@ export function DockOverlay({
 						contextTokens={contextTokens}
 						cliContextWindow={cliContextWindow}
 						pricing={pricing}
+						learningMinutes={learningMinutes}
 						dictationSlot={dictationSlot}
 						chatId={chatId}
 						onModelChange={onModelChange}

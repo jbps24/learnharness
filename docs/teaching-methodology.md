@@ -57,6 +57,8 @@ The learner has finite mental effort per session. Optimize its **proportion**, n
 
 The point is *not* to reduce the learner's effort — struggle with the material is how it locks in. The point is that all of it goes into the material. The system absorbs the logistics; the learner never does.
 
+Breaks are logistics of the same kind, and the system owns them. It keeps the clock and tells the teacher when a break is due; the learner never tracks time or decides when to stop. The teacher places the offer at a closed point, preferably a unit end, never mid-step or during a repair. A break is only ever offered, never forced: the learner can skip it or ask for one at any time.
+
 ### 7b. The minimal tree — the smallest dependency graph from current to goal
 
 The lesson traverses a dependency structure: facts that require other facts. Optimization: **the minimal tree** — the smallest set of propositions, in the smallest derivation depth, that leads from the current understanding to the goal.

@@ -6,6 +6,8 @@
  * for it. A failed cut leaves the record untouched; the next turn retries.
  */
 
+import type { Usage } from "@earendil-works/pi-ai";
+import type { PlanTree } from "../core/contracts/plan.ts";
 import {
 	serializeForSummary,
 	type LessonJudgment,
@@ -31,38 +33,56 @@ const EMPTY_JUDGMENT: LessonJudgment = { learnerWide: "", commitments: "", nodes
 /** Markers that must not be summarized as lesson content. */
 function withoutMarkers(messages: readonly LhMessage[]): LhMessage[] {
 	return messages.filter(
-		(m) => m.role !== "custom" || (m.customType !== "compaction" && m.customType !== "lesson-record" && m.customType !== "units-note"),
+		(m) => m.role !== "custom" || (m.customType !== "compaction" && m.customType !== "lesson-record" && m.customType !== "units-note" && m.customType !== "break-note" && m.customType !== "break-taken" && m.customType !== "break-skipped" && m.customType !== "break-ended"),
 	);
 }
 
-export async function runUnitCut(
-	deps: CompactionDeps,
-	chatId: string,
-): Promise<"done" | "failed" | "skipped"> {
-	if (isTurnRunning(chatId)) return "skipped";
-	const record = deps.chatStore.getChat(chatId);
-	if (!record?.tree || !record.tree.units) return "skipped";
-	const tree = record.tree;
-	const units = tree.units!;
-	const messages = record.messages;
-	if (!unitCutDue(tree, messages)) return "skipped";
+export interface PreparedJudgment {
+	spanKey: string;
+	judgment: LessonJudgment;
+	usages: Usage[];
+}
 
-	const cur = currentUnitIndex(tree, messages)!;
+/** A judgment computed ahead of the cut (during a unit-end break), keyed by the span it covers. */
+// globalThis-backed: `next dev` compiles each route entry into its own module instance.
+const g = globalThis as typeof globalThis & { __lhPreparedJudgments?: Map<string, PreparedJudgment> };
+export const preparedJudgments: Map<string, PreparedJudgment> = (g.__lhPreparedJudgments ??= new Map());
+
+/** The previous record id plus the ids of the non-marker messages in [s, k), joined. */
+export function spanKeyOf(
+	messages: readonly LhMessage[],
+	s: number,
+	k: number,
+	previousRecordId?: string | null,
+): string {
+	return [previousRecordId ?? "", ...withoutMarkers(messages.slice(s, k)).map((m) => m.id)].join("|");
+}
+
+/** The span and facts a cut into unit `cur` works from. */
+function cutInputs(tree: PlanTree, messages: readonly LhMessage[], cur: number, k: number) {
+	const units = tree.units!;
 	const finished = units.slice(0, cur).map((u) => u.id);
 	const currentUnitId = units[cur]!.id;
-
-	// The boundary: the earliest teach tag whose node is in the current unit.
-	const firstTag = teachTags(messages).find((tag) => unitIndexOf(tree, tag.nodeId) === cur);
-	if (!firstTag) return "skipped";
-	const k = firstTag.messageIndex;
 	const previousRecord = newestLessonRecord(messages);
 	const s = previousRecord ? Math.max(0, messages.findIndex((m) => m.id === previousRecord.details.firstKeptMessageId)) : 0;
-
 	const taughtIds = [...new Set(teachTags(messages).filter((tag) => tag.messageIndex >= s && tag.messageIndex < k).map((tag) => tag.nodeId))];
 	const previousJudgment = previousRecord?.details.judgment ?? null;
 	// The merged judgment keeps every previous id and adds the taught ones.
 	const judgmentNodeIds = [...new Set([...Object.keys(previousJudgment?.nodes ?? {}), ...taughtIds])];
 	const facts = recordFacts(tree, messages, finished, currentUnitId, judgmentNodeIds);
+	return { finished, currentUnitId, previousRecord, s, taughtIds, previousJudgment, facts };
+}
+
+/** Build the judgment prompt (with in-span compaction fallback) and verify it fits one request. */
+function fitJudgmentPrompt(
+	deps: CompactionDeps,
+	chatId: string,
+	messages: readonly LhMessage[],
+	tree: PlanTree,
+	cur: number,
+	k: number,
+): { prompt: string; taughtIds: string[]; previousJudgment: LessonJudgment | null } | "failed" {
+	const { s, taughtIds, previousJudgment, facts } = cutInputs(tree, messages, cur, k);
 	const promptFor = (spanText: string) => buildLessonRecordPrompt({ taughtIds, facts, previous: previousJudgment, spanText });
 
 	let prompt = promptFor(serializeForSummary(withoutMarkers(messages.slice(s, k))));
@@ -84,27 +104,82 @@ export async function runUnitCut(
 		}
 		prompt = fallback;
 	}
+	return { prompt, taughtIds, previousJudgment };
+}
 
+/** Run the summarizer on a fitted judgment prompt, parse, and retry once on rejection. */
+async function summarizeLessonJudgment(
+	deps: CompactionDeps,
+	chatId: string,
+	fitted: { prompt: string; taughtIds: string[]; previousJudgment: LessonJudgment | null },
+): Promise<{ judgment: LessonJudgment; usages: Usage[] } | "failed"> {
+	const { prompt, taughtIds, previousJudgment } = fitted;
 	const summarize = deps.summarize ?? subagentSummarizer;
+	const usages: Usage[] = [];
+	let answer = await summarize(prompt, deps.engine);
+	usages.push(answer.usage);
+	let parsed = parseLessonJudgment(answer.summary, taughtIds);
+	if (!parsed.ok) {
+		const rejected = `${prompt}\n\nYour previous answer was rejected:\n${parsed.problems.map((p) => `- ${p}`).join("\n")}\nReturn the corrected JSON object only.`;
+		answer = await summarize(rejected, deps.engine);
+		usages.push(answer.usage);
+		parsed = parseLessonJudgment(answer.summary, taughtIds);
+	}
+	if (!parsed.ok) {
+		console.error(`[chat ${chatId}] unit cut failed: lesson judgment rejected twice:`, parsed.problems);
+		return "failed";
+	}
+	return { judgment: mergeJudgment(previousJudgment ?? EMPTY_JUDGMENT, parsed.value), usages };
+}
+
+/** The judgment step of a unit cut: prompt, fit check and fallback, summarizer call, parse and one retry. */
+export async function computeLessonJudgment(
+	deps: CompactionDeps,
+	chatId: string,
+	messages: readonly LhMessage[],
+	tree: PlanTree,
+	cur: number,
+	k: number,
+): Promise<{ judgment: LessonJudgment; usages: Usage[] } | "failed"> {
+	const fitted = fitJudgmentPrompt(deps, chatId, messages, tree, cur, k);
+	if (fitted === "failed") return "failed";
+	return summarizeLessonJudgment(deps, chatId, fitted);
+}
+
+export async function runUnitCut(
+	deps: CompactionDeps,
+	chatId: string,
+): Promise<"done" | "failed" | "skipped"> {
+	if (isTurnRunning(chatId)) return "skipped";
+	const record = deps.chatStore.getChat(chatId);
+	if (!record?.tree || !record.tree.units) return "skipped";
+	const tree = record.tree;
+	const messages = record.messages;
+	if (!unitCutDue(tree, messages)) return "skipped";
+
+	const cur = currentUnitIndex(tree, messages)!;
+
+	// The boundary: the earliest teach tag whose node is in the current unit.
+	const firstTag = teachTags(messages).find((tag) => unitIndexOf(tree, tag.nodeId) === cur);
+	if (!firstTag) return "skipped";
+	const k = firstTag.messageIndex;
+	const { finished, currentUnitId, previousRecord, s, facts } = cutInputs(tree, messages, cur, k);
+
+	// A prepared judgment is used only when its span is the real one; any other entry is dropped.
+	const prepared = preparedJudgments.get(chatId);
+	preparedJudgments.delete(chatId);
+	const reusable = prepared && prepared.spanKey === spanKeyOf(messages, s, k, previousRecord?.id) ? prepared : null;
+
+	// Check prompt fit before signalling a running cut so a no-fit bailout emits no status event.
+	const fitted = reusable ? null : fitJudgmentPrompt(deps, chatId, messages, tree, cur, k);
+	if (fitted === "failed") return "failed";
+
 	setRunningUnit(chatId, cur + 1);
 	emit("compaction-changed", { chatId, running: true, unit: cur + 1 });
 	try {
-		const usages = [];
-		let answer = await summarize(prompt, deps.engine);
-		usages.push(answer.usage);
-		let parsed = parseLessonJudgment(answer.summary, taughtIds);
-		if (!parsed.ok) {
-			const rejected = `${prompt}\n\nYour previous answer was rejected:\n${parsed.problems.map((p) => `- ${p}`).join("\n")}\nReturn the corrected JSON object only.`;
-			answer = await summarize(rejected, deps.engine);
-			usages.push(answer.usage);
-			parsed = parseLessonJudgment(answer.summary, taughtIds);
-		}
-		if (!parsed.ok) {
-			console.error(`[chat ${chatId}] unit cut failed: lesson judgment rejected twice:`, parsed.problems);
-			return "failed";
-		}
-
-		const judgment = mergeJudgment(previousJudgment ?? EMPTY_JUDGMENT, parsed.value);
+		const computed = reusable ?? (await summarizeLessonJudgment(deps, chatId, fitted!));
+		if (computed === "failed") return "failed";
+		const { judgment, usages } = computed;
 		const at = new Date().toISOString();
 		const details: LessonRecordDetails = {
 			firstKeptMessageId: messages[k]!.id,

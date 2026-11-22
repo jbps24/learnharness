@@ -44,6 +44,7 @@ export function StatsBar({
 	contextTokens = null,
 	cliContextWindow = null,
 	pricing,
+	learningMinutes,
 	dictationSlot,
 	chatId,
 	leadingSlot,
@@ -53,6 +54,7 @@ export function StatsBar({
 	contextTokens?: number | null;
 	cliContextWindow?: ReturnType<typeof cliContextWindowOf>;
 	pricing?: SessionPricing;
+	learningMinutes?: number;
 	/** The bound session (per-session models, owner 2026-09-28): present
 	 *  on the in-session bar — the model control binds THE SESSION'S own
 	 *  record; absent on the draft surfaces, where it binds the strong
@@ -201,6 +203,9 @@ export function StatsBar({
 			{/* The middle slot: dictation (owner, 2026-09-17). flex-1 lets the
 			    meter expand into the row's free width; justify-center keeps the
 			    lone idle mic button visually centered. */}
+			{learningMinutes !== undefined && (
+				<span data-testid="learning-minutes" className="shrink-0 tabular-nums text-muted-foreground">{`${learningMinutes} min`}</span>
+			)}
 			{dictationSlot && (
 				<div className="flex min-w-0 flex-1 items-center justify-center">{dictationSlot}</div>
 			)}

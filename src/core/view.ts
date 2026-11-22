@@ -39,6 +39,8 @@ import { readPluginQuestionMessageAnnotation, readPluginQuestionCancellation, ty
 import { pluginProblemForCall, type PluginProblemSnapshot } from "./plugin-problems.ts";
 import { activeCompactionOf, type CompactionDetails } from "./compaction.ts";
 import { QUESTION_TOOLS } from "./pending.ts";
+import { breakState, breakTimings } from "./breaks.ts";
+import { BREAK_DEFAULTS } from "./settings.ts";
 import type { SubagentArtifactData, SubagentResultMeta } from "./contracts/jobs.ts";
 import type { LessonRecordDetails, PlanBlockData } from "./contracts/chat.ts";
 import type { PlanUnit } from "./contracts/plan.ts";
@@ -262,6 +264,12 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 		}
 
 		if (role === "toolResult") {
+			if ((m as ToolResultMessage).toolName === "suggest_break") {
+				// Plan 002 part 6: an ok call projects one divider; a refused one nothing.
+				const data = breakPartData(messages, messages.indexOf(m));
+				if (data) out.push({ id: m.id, role: "user", parts: [{ type: "data-break", id: `br_${data.toolCallId}`, data }] });
+				continue;
+			}
 			applyResultTo(findToolPart(m as LhMessage & ToolResultMessage), m as ToolResultMessage);
 			continue;
 		}
@@ -293,6 +301,8 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 				} else if (block.type === "thinking") {
 					reasoning.push({ type: "reasoning", id: `${m.id}-r${reasoningN++}`, text: block.thinking, state: "done" });
 				} else if (block.type === "toolCall") {
+					// The break offer renders from its result (the divider), never as a tool card.
+					if (block.name === "suggest_break") continue;
 					const annotation = readPluginQuestionMessageAnnotation(m, contentIndex);
 					if (annotation.status !== "absent") {
 						// Source position, not reasoning-partitioned/grouped view index.
@@ -364,6 +374,27 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 	}
 
 	return out;
+}
+
+const isOkBreakResult = (m: LhMessage): boolean =>
+	m.role === "toolResult" && m.toolName === "suggest_break" && !m.isError && (m.details as { ok?: boolean } | null)?.ok !== false;
+
+/** The `data-break` payload of the suggest_break result at `index`, read from
+ *  breakState as of just before the next ok suggestion; null when refused. */
+function breakPartData(messages: readonly LhMessage[], index: number): Record<string, unknown> | null {
+	if (!isOkBreakResult(messages[index]!)) return null;
+	let end = messages.length;
+	for (let j = index + 1; j < messages.length; j++) {
+		if (isOkBreakResult(messages[j]!)) { end = j; break; }
+	}
+	const s = breakState(messages.slice(0, end), undefined, breakTimings(BREAK_DEFAULTS), true, 0).latest;
+	if (!s) return null;
+	const state = s.outcome === "pending" ? "offered" : s.outcome;
+	const data: Record<string, unknown> = { toolCallId: s.toolCallId, state };
+	if (s.takenAt !== undefined) data.takenAt = s.takenAt;
+	if (s.lengthMinutes !== undefined) data.lengthMinutes = s.lengthMinutes;
+	if (s.breakMs !== undefined) data.breakMs = s.breakMs;
+	return data;
 }
 
 /** The dock-owned tools: question tools (client-owned results — the dock
@@ -541,6 +572,12 @@ function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[]): void {
 		case "problem-dismissed":
 			// UI-only (the ask-style dismissal): the synthesized conclude
 			// pair — which rides the NEXT input — carries the record's face.
+			return;
+		case "break-note":
+		case "break-taken":
+		case "break-skipped":
+		case "break-ended":
+			// Plan 002 part 6: markers render nothing; the divider comes from the call.
 			return;
 		case "units-note":
 			// Wire-only session note (plan 001 part 6): renders nothing.
