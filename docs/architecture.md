@@ -42,6 +42,7 @@ The stored record has two projections:
 
 - [`toLlmMessages`](../src/core/native-messages.ts) strips app metadata, flattens model-facing markers, applies the active compaction cut, and repairs eligible interrupted tool pairs at the provider boundary.
 - [`projectView`](../src/core/view.ts) derives UI messages, question/problem docks, and artifacts. It is not the stored format or provider wire.
+- [`findUnits` / `findHits`](../src/core/find-text.ts) are the one pure extractor behind Find: stored messages + projected view + side threads → searchable units (kind, unit label, time, order, blocks) and newest-first hits. Matching lives in [`find-match.ts`](../src/core/find-match.ts) (case- and accent-insensitive, `ß`→`ss`, whitespace runs as one space, original UTF-16 offsets). Text never revealed to the learner (a hidden pending question, a problem's `modelSolution` before conclude) is not extracted.
 
 Pi seeds the system prompt/tools at construction; that synthetic system message is not persisted. New turns therefore get current instructions. The app does not use the AI SDK's client-transcript replacement or `addToolOutput` loop.
 
@@ -54,6 +55,10 @@ Settlement persists new native messages, plan snapshots, and usage, including pa
 Disconnecting a browser detaches a view, not the agent. Explicit abort is separate. [`session-core.ts`](../components/session-core.ts) owns reattachment, bounded 409 recovery, and adoption of canonical state. One recovery attachment is allowed after premature EOF/read failure; repeated transport failure shows an error.
 
 Question drafts survive optimistic unmount in memory. Uncertain submissions reconcile the saved record and running state before resending, scoped to the same question occurrence. Provider-response retry is explicit: it preserves failed attempts on disk while omitting the eligible failed tail from temporary model context. It is not mount-time replay or automatic retry of arbitrary failures.
+
+### Drawn history
+
+The session view draws only the newest part of a long session (plan 003). The cut is render-only: the client keeps the whole session, and every whole-history fold, the GET sync and the merge model are unchanged. [`core/drawn-history.ts`](../src/core/drawn-history.ts) picks the start (about 270 KB of newest content, extended back to just after a learner input; a session within the budget, or with under a quarter budget of earlier history, is drawn whole). [`chat.tsx`](../components/chat.tsx) anchors the start to a message id, so appends, GET replaces and streaming never move it, and nothing un-draws while the `Chat` lives; a new open or reload cuts afresh, also in the server HTML. Rows and parts before the start render `null`, keeping their indices. [`earlier-history-divider.tsx`](../components/earlier-history-divider.tsx) offers **Show earlier** (one more budget step) and **Show all**, keeping the reading position. The window event `lh:draw-to-message` (`detail.messageId`) draws back to a target in one unbroken stretch, showing "Drawing earlier history…" first when the draw is large (`DRAW_STATUS_MIN`), and answers with `lh:drawn-to-message` after the commit. [`session-navigation.tsx`](../components/session-navigation.tsx) sends it when a hash target is not in the DOM.
 
 ### Side questions
 

@@ -50,6 +50,13 @@ export function SessionMessageNavigation() {
 		flash.current.target.classList.remove("lh-source-highlight");
 		flash.current = null;
 	}, []);
+	/** Plan 003 part 2: a hash target in the earlier history is not in the DOM;
+	 * ask the session to draw back to it. The retry loop picks it up after. */
+	const requestDraw = useCallback(() => {
+		const messageId = messageIdFromHash(window.location.hash);
+		if (!messageId || document.getElementById(messageAnchorId(messageId))) return;
+		window.dispatchEvent(new CustomEvent("lh:draw-to-message", { detail: { messageId } }));
+	}, []);
 	/** Synchronous arrival: release the bottom-follow lock, scroll every
 	 * session container so the passage sits near the top, flash it. Returns
 	 * true when this hash is (now) jumped-to. */
@@ -76,6 +83,7 @@ export function SessionMessageNavigation() {
 	// anchor (a deleted message) — the session simply opens where it opens.
 	useEffect(() => {
 		if (!window.location.hash) return;
+		requestDraw();
 		let ticks = 0;
 		const id = window.setInterval(() => {
 			// Keep watching PAST the first success: hydration / record adoption
@@ -89,22 +97,37 @@ export function SessionMessageNavigation() {
 			else jump();
 		}, 64);
 		return () => window.clearInterval(id);
-	}, [jump]);
+	}, [jump, requestDraw]);
 
 	useEffect(() => {
+		let pending: (() => void) | null = null;
+		const cancelPending = () => {
+			pending?.();
+			pending = null;
+		};
 		const onHash = () => {
 			lastJump.current = null;
 			clearFlash();
-			jump();
+			cancelPending();
+			// The draw commits after this handler returns: jump once it has.
+			const onDrawn = () => {
+				cancelPending();
+				jump();
+			};
+			window.addEventListener("lh:drawn-to-message", onDrawn);
+			pending = () => window.removeEventListener("lh:drawn-to-message", onDrawn);
+			requestDraw();
+			if (jump()) cancelPending();
 		};
 		window.addEventListener("hashchange", onHash);
 		window.addEventListener("popstate", onHash);
 		// Cleanup removes LISTENERS ONLY: never clearFlash/lastJump here — a
 	// dep-churned re-run must not strip a live flash (see the note above).
 		return () => {
+			cancelPending();
 			window.removeEventListener("hashchange", onHash);
 			window.removeEventListener("popstate", onHash);
 		};
-	}, [jump, clearFlash]);
+	}, [jump, clearFlash, requestDraw]);
 	return null;
 }

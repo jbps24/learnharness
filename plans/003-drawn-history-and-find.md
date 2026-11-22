@@ -346,9 +346,9 @@ a parity test exposes a mismatch, which is then fixed in the extractor.
 
 | Part | Status | Build |
 |---|---|---|
-| 1 Drawn history core | open | |
-| 2 Session view draws the drawn history | open | |
-| 3 Small views | open | |
-| 4 Find text core | open | |
-| 5 Find in the header | open | |
-| 6 Parity tests | open | |
+| 1 Drawn history core | green | 20261122-120444-003-part-1 |
+| 2 Session view draws the drawn history | green | 20261122-130617-003-part-2 |
+| 3 Small views | green | 20261122-141506-003-part-3 |
+| 4 Find text core | green | 20261122-152049-003-part-4 |
+| 5 Find in the header | green | 20261122-163408-003-part-5 |
+| 6 Parity tests | green | 20261122-185045-003-part-6 |

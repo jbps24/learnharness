@@ -56,6 +56,13 @@ import {
 	firstSourceTextParts,
 	cliContextWindowOf,
 	messageAnchorId,
+	drawStatusNeeded,
+	drawnPartFilter,
+	drawnStartForTarget,
+	initialDrawnStart,
+	showEarlierStart,
+	startId,
+	startIndex,
 	sideEntryPoints,
 	sideSegmentId,
 	textPartMessageId,
@@ -81,6 +88,7 @@ import { pluginQuestionOccurrenceKey, type PluginQuestionSnapshot } from "@/src/
 import type { PluginQuestionDraft } from "./session-core";
 import { SessionFind } from "@/components/session-find";
 import { SessionMessageNavigation } from "@/components/session-navigation";
+import { EarlierHistoryDivider } from "@/components/earlier-history-divider";
 import { SelectionToolbar } from "@/components/selection-toolbar";
 import { createCiteAction, type CitationEditTarget } from "@/components/citation-actions";
 import { CitationActionsContext, type CitationActions } from "@/components/citation-chip";
@@ -128,6 +136,8 @@ import {
 	teachStepIndex,
 	toolQuestionKind,
 	questionNeedsReveal,
+	PRACTICE_PROBLEM_TOOL,
+	PRACTICE_CONCLUDE_TOOL,
 } from "@/src/core";
 import { ReadingThinkingField } from "@/components/reading-thinking";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
@@ -365,6 +375,67 @@ export function Chat({
 	const sourceTextParts = useMemo(() => firstSourceTextParts(messages), [messages]);
 	const newestTurnFrom = newestLearnerTurnFrom(messages);
 	const sideEntries = useMemo(() => sideEntryPoints(nativeMessages, messages), [nativeMessages, messages]);
+	// Plan 003 part 2: the drawn history is render-only. The start is anchored
+	// to a message id, so appends, GET replaces and streaming never move it;
+	// the initialiser also runs during SSR. Nothing un-draws while this lives.
+	const [drawnStartId, setDrawnStartId] = useState<string | null>(() => startId(nativeMessages, initialDrawnStart(nativeMessages)));
+	const [drawingEarlier, setDrawingEarlier] = useState(false);
+	const drawnStart = startIndex(nativeMessages, drawnStartId);
+	const isDrawn = useMemo(() => drawnPartFilter(nativeMessages, drawnStart), [nativeMessages, drawnStart]);
+	const drawLive = useRef({ native: nativeMessages, start: drawnStart });
+	drawLive.current = { native: nativeMessages, start: drawnStart };
+	const keepScroll = useRef<{ height: number; top: number } | null>(null);
+	const drawnNotify = useRef<string | null>(null);
+	const applyDrawnStart = (next: number, keepPosition: boolean) => {
+		const scroller = scrollContextRef.current?.scrollRef.current;
+		keepScroll.current = keepPosition && scroller ? { height: scroller.scrollHeight, top: scroller.scrollTop } : null;
+		setDrawnStartId(startId(drawLive.current.native, next));
+	};
+	useLayoutEffect(() => {
+		const kept = keepScroll.current;
+		keepScroll.current = null;
+		if (kept) {
+			const context = scrollContextRef.current;
+			const scroller = context?.scrollRef.current;
+			if (context && scroller) {
+				context.stopScroll();
+				scroller.scrollTop = kept.top + (scroller.scrollHeight - kept.height);
+			}
+		}
+		const notify = drawnNotify.current;
+		drawnNotify.current = null;
+		if (notify !== null) window.dispatchEvent(new CustomEvent("lh:drawn-to-message", { detail: { messageId: notify } }));
+	}, [drawnStartId]);
+	// A layout effect: it must listen before the navigation child's mount effect asks.
+	useLayoutEffect(() => {
+		let alive = true;
+		const onDrawTo = (event: Event) => {
+			const messageId = (event as CustomEvent<{ messageId?: string }>).detail?.messageId;
+			if (!messageId) return;
+			const { native, start } = drawLive.current;
+			const index = native.findIndex((m) => m.id === messageId);
+			if (index === -1) return;
+			const next = drawnStartForTarget(native, index, start);
+			const arrived = () => window.dispatchEvent(new CustomEvent("lh:drawn-to-message", { detail: { messageId } }));
+			if (next >= start) { arrived(); return; }
+			const apply = () => {
+				const live = drawLive.current;
+				const target = drawnStartForTarget(live.native, live.native.findIndex((m) => m.id === messageId), live.start);
+				drawnNotify.current = messageId;
+				if (target < live.start) applyDrawnStart(target, false);
+				else { drawnNotify.current = null; arrived(); }
+			};
+			if (!drawStatusNeeded(native, next, start)) { apply(); return; }
+			setDrawingEarlier(true);
+			requestAnimationFrame(() => requestAnimationFrame(() => {
+				if (!alive) return;
+				setDrawingEarlier(false);
+				apply();
+			}));
+		};
+		window.addEventListener("lh:draw-to-message", onDrawTo);
+		return () => { alive = false; window.removeEventListener("lh:draw-to-message", onDrawTo); };
+	}, []);
 
 	// The reattach settled terminal → the sync-and-continue seam (below).
 	setReattachSettled(() => reattachSettledRef.current());
@@ -1787,6 +1858,19 @@ export function Chat({
 							<div className="min-w-4 flex-1" aria-hidden="true" />
 					</>
 					)}
+					{/* Find (plan 003 part 5): the icon sits left of the plan chip, in every session. */}
+					<SessionFind
+						scopeRef={sessionFindScopeRef}
+						scrollContextRef={scrollContextRef}
+						messages={nativeMessages}
+						sideThreads={sideThread.threads}
+						dock={!!pending && !requiresReveal}
+						drawnStart={drawnStart}
+						onOpenSideThread={({ sourceMessageId }) => {
+							const entry = document.querySelector<HTMLElement>(`[data-side-segment-id="${sourceMessageId}"]`);
+							openSideThread({ sourceMessageId, anchor: entry ? { kind: "element", element: entry } : { kind: "composer" } });
+						}}
+					/>
 					{/* The plan chip (owner, plan-placement round): session-level
 					    structure beside the phase chip — access to the full-DAG popup
 					    at every width; the marginalia is the wide-screen glance view. */}
@@ -1832,7 +1916,6 @@ export function Chat({
 					<PluginSessionTopBarActions readContext={actionContext} captureContext={captureActionContext} refreshRef={refreshPluginActions} />
 				</TopBar>
 
-				<SessionFind scopeRef={sessionFindScopeRef} scrollContextRef={scrollContextRef} />
 				<div ref={sessionFindScopeRef} className="relative flex min-h-0 flex-1">
 				<Conversation className="h-full min-w-0 flex-1" initial="instant" contextRef={scrollContextRef}>
 					<SessionMessageNavigation />
@@ -1846,14 +1929,25 @@ export function Chat({
 								/>
 							)}
 
-							{messages.map((m, mi) =>
+							{drawnStart > 0 && (
+									<EarlierHistoryDivider
+										onShowEarlier={() => applyDrawnStart(showEarlierStart(nativeMessages, drawnStart), true)}
+										onShowAll={() => applyDrawnStart(0, true)}
+									/>
+								)}
+								{drawingEarlier && (
+									<SystemLine testId="drawing-earlier">Drawing earlier history…</SystemLine>
+								)}
+
+								{messages.map((m, mi) =>
+									(m.parts.length === 0 ? !isDrawn({ type: "text", sourceMessageId: m.id }) : !m.parts.some(isDrawn)) ? null :
 								m.role === "user" && isSubagentSteer(m) ? (
 									// Sub-agent delivery (wake-pipeline steer): NO message bubble — the
 									// artifact card sits in the transcript column directly, full width
 									// and centered like the teacher's artifacts (contracts.ts "THE ASYNC
 									// PROTOCOL" §4). Key fallback: legacy transcripts (pre id-hygiene)
 									// can still hold empty ids — the index keeps keys unique for them.
-									<SubagentSteerCard key={m.id || `m-${mi}`} message={m} />
+									<div key={m.id || `m-${mi}`} data-find-part={m.parts.find((p) => p.type === "data-subagent-artifact")?.id} className="contents"><SubagentSteerCard message={m} /></div>
 								) : m.role === "user" && m.parts.some((p) => p.type === "data-probe-handoff") ? (
 								// The probe→teach handoff wake (custom-message scheme): the
 								// PLANNING DIVIDER IS the seam (owner ruling 2026-09-26 — it
@@ -1874,6 +1968,7 @@ export function Chat({
 								// EMPTY bubble (owner report, 2026-10-04).
 								<Fragment key={m.id || `m-${mi}`}>
 									{m.parts.map((part, pi) => {
+										if (!isDrawn(part)) return null;
 										switch (part.type) {
 											case "data-graph-context":
 												return <GraphContextCard key={pi} data={part.data as GraphContextData} />;
@@ -1882,7 +1977,7 @@ export function Chat({
 											case "data-compaction-cut":
 												return <CompactionCutDivider key={pi} data={part.data as CompactionDividerData} />;
 											case "data-unit-cut":
-												return <UnitCutDivider key={pi} data={part.data as UnitCutDividerData} />;
+												return <div key={pi} data-find-part={part.id} className="contents"><UnitCutDivider data={part.data as UnitCutDividerData} /></div>;
 											case "data-break": {
 												const data = part.data as BreakDividerData;
 												return (
@@ -1898,10 +1993,10 @@ export function Chat({
 											}
 											case "data-plugin-problem-submission": {
 												const submitted = readPluginProblemSubmission(part.data);
-												return <PluginProblemSubmitted key={pi} data={part.data} snapshot={submitted ? pluginProblemById(nativeMessages, submitted.problemId) : null} chatId={chatId} />;
+												return <div key={pi} data-find-part={part.id} className="contents"><PluginProblemSubmitted data={part.data} snapshot={submitted ? pluginProblemById(nativeMessages, submitted.problemId) : null} chatId={chatId} /></div>;
 											}
 											case "data-practice-thinking":
-												return <ThinkingCard key={pi} data={part.data as PracticeThinkingData} />;
+												return <div key={pi} data-find-part={part.id} className="contents"><ThinkingCard data={part.data as PracticeThinkingData} /></div>;
 											case "data-practice-next":
 												// The learner's move-on signal (owner round 16): a compact
 												// centered mono-caps line — chrome, the dismissal register.
@@ -1959,6 +2054,7 @@ export function Chat({
 										    Rendered WITHOUT the Message wrapper — that is the bubble. */
 											<div
 										data-testid="user-message"
+										data-find-part={`${m.parts.find((p) => p.type === "text")?.sourceMessageId ?? m.id}:you`}
 										data-older-transcript-row={mi < newestTurnFrom ? "" : undefined}
 										/* THE DOCUMENT, ALL-IN (owner rounds two+three, 2026-10-07):
 										    no chat side — the user message is a full-width card-color
@@ -1982,8 +2078,9 @@ export function Chat({
 									<Message from="assistant" className="max-w-full" data-older-transcript-row={mi < newestTurnFrom ? "" : undefined}>
 									<MessageContent className="w-full">
 											{m.parts.map((part, pi) => {
-												if (part.pluginProblem) return <ProblemCard key={pi} part={{ ...part, state: part.state ?? "input-available", toolCallId: part.toolCallId ?? "" }} />;
-												if (part.pluginQuestion) return <PluginQuestionPart key={pi} part={part} chatId={chatId} />;
+												if (!isDrawn(part)) return null;
+													if (part.pluginProblem) return <div key={pi} data-find-part={part.sourceMessageId !== undefined && part.sourceContentIndex !== undefined ? `${part.sourceMessageId}:${part.sourceContentIndex}` : undefined} className="contents"><ProblemCard part={{ ...part, state: part.state ?? "input-available", toolCallId: part.toolCallId ?? "" }} /></div>;
+												if (part.pluginQuestion) return <div key={pi} data-find-part={`${part.sourceMessageId}:${part.sourceContentIndex}`} className="contents"><PluginQuestionPart part={part} chatId={chatId} /></div>;
 												const isLastPart = mi === messages.length - 1 && pi === m.parts.length - 1;
 												// The step boundary where teaching begins (round 8): when
 												// the teach flip happens in a LATER step, its PhaseDivider
@@ -2017,7 +2114,7 @@ export function Chat({
 														const sourceId = textPartMessageId(part.id);
 														const anchor = sourceId && sourceTextParts.get(sourceId) === part.id ? messageAnchorId(sourceId) : undefined;
 														return (
-															<div key={part.id || pi} id={anchor} data-source-message-id={sourceId ?? undefined} className="lh-source-passage">
+															<div key={part.id || pi} id={anchor} data-find-part={part.id} data-source-message-id={sourceId ?? undefined} className="lh-source-passage">
 																<MessageResponse>{part.text}</MessageResponse>
 															</div>
 														);
@@ -2038,11 +2135,12 @@ export function Chat({
 														// The plan in the chat (wave 4): a frozen snapshot
 														// block — rendered as carried, never re-derived.
 														return (
-															<PlanBlock
-																key={pi}
-																data={part.data as PlanBlockData}
-																onOpen={() => setPlanOpen(true)}
-															/>
+															<div key={pi} data-find-part={part.id} className="contents">
+																<PlanBlock
+																	data={part.data as PlanBlockData}
+																	onOpen={() => setPlanOpen(true)}
+																/>
+															</div>
 														);
 													case "tool-quiz":
 													case "tool-probe":
@@ -2060,7 +2158,8 @@ export function Chat({
 														// transcript; answered ones render as graded records.
 														if (part.state === "output-available") {
 															return (
-																<AnsweredCard key={pi} answer={part.output as QuestionAnswerData} input={part.input} toolCallId={part.toolCallId} />
+																<AnsweredCard key={pi} answer={part.output as QuestionAnswerData} input={part.input} toolCallId={part.toolCallId}
+																		findKey={part.sourceMessageId !== undefined && part.sourceContentIndex !== undefined ? `${part.sourceMessageId}:${part.sourceContentIndex}` : undefined} />
 															);
 														}
 														return null;
@@ -2068,7 +2167,10 @@ export function Chat({
 													default: {
 														// Built-in presentation stays authoritative; plugin renderers
 														// extend only the generic native-tool fallback slot.
-														if (part.type.startsWith("tool-")) return <ToolPartRenderer key={pi} part={part} />;
+														if (part.type === `tool-${PRACTICE_PROBLEM_TOOL}` || part.type === `tool-${PRACTICE_CONCLUDE_TOOL}`) {
+																return <div key={pi} data-find-part={part.sourceMessageId !== undefined && part.sourceContentIndex !== undefined ? `${part.sourceMessageId}:${part.sourceContentIndex}` : undefined} className="contents"><ToolPartRenderer part={part} /></div>;
+															}
+															if (part.type.startsWith("tool-")) return <ToolPartRenderer key={pi} part={part} />;
 														return null;
 													}
 												}
@@ -3061,6 +3163,7 @@ export function DockOverlay({
 									{reconciliation === "ready" && <><p role="status" className="text-sm text-muted-foreground">Question unavailable</p><Button type="button" variant="ghost" disabled={!pluginReady} onClick={() => { void finishDictation().then(onPluginDismiss); }}>Dismiss question</Button></>}
 								</div>
 							) : pending ? (
+<div data-find-part="dock" className="contents">
 								<QuestionDock
 									viewReader={nativeViewReader}
 									toolName={pending.tool as "quiz" | "probe" | "ask_user_question" | "explain" | "recall"}
@@ -3082,7 +3185,7 @@ export function DockOverlay({
 									compactionRunning={compactionRunning}
 									layoutRequest={layoutRequest}
 									onLayout={setQuestionLayout}
-								/>
+								/></div>
 							) : pluginPractice ? (
 								<PluginProblemDock {...pluginPractice} viewReader={customViewReader} expanded={expanded} onExpand={() => { setExpanded(true); void suppressFoldDuringReveal(); }} />
 							) : practice ? (

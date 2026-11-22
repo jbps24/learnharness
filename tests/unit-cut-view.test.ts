@@ -87,6 +87,7 @@ describe("projectView unit cuts", () => {
 			parts: [
 				{
 					type: "data-unit-cut",
+					sourceMessageId: "m2",
 					id: "uc_lr1",
 					data: { unitIndex: 2, title: "Derivatives" },
 				},
@@ -122,12 +123,26 @@ describe("projectView unit cuts", () => {
 		assert.deepEqual(cuts[0], {
 			id: "unit_lr1",
 			role: "user",
-			parts: [{ type: "data-unit-cut", id: "uc_lr1", data: { unitIndex: 2, title: "Derivatives" } }],
+			parts: [
+				{
+					type: "data-unit-cut",
+					sourceMessageId: "m2",
+					id: "uc_lr1",
+					data: { unitIndex: 2, title: "Derivatives" },
+				},
+			],
 		});
 		assert.deepEqual(cuts[1], {
 			id: "unit_lr2",
 			role: "user",
-			parts: [{ type: "data-unit-cut", id: "uc_lr2", data: { unitIndex: 3, title: "Integrals" } }],
+			parts: [
+				{
+					type: "data-unit-cut",
+					sourceMessageId: "m3",
+					id: "uc_lr2",
+					data: { unitIndex: 3, title: "Integrals" },
+				},
+			],
 		});
 		const m2Index = view.findIndex((m) => m.id === "m2");
 		const m3Index = view.findIndex((m) => m.id === "m3");
@@ -179,6 +194,7 @@ describe("projectView unit cuts", () => {
 			parts: [
 				{
 					type: "data-unit-cut",
+					sourceMessageId: "m2",
 					id: "uc_lr_gone",
 					data: { unitIndex: 3, title: "removed-unit" },
 				},

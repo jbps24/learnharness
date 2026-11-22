@@ -101,10 +101,13 @@ describe("sessionFindRanges — the displayed-text DOM seam", () => {
 		assert.equal(ranges.length, 1);
 	});
 
-	it("code spans keep their literal whitespace (pre): no collapse", () => {
+	it("whitespace runs match across pre and normal text while pre ranges keep literal characters", () => {
 		mount(`<div data-session-find-root=""><pre>a  b</pre><p>a b</p></div>`);
-		assert.equal(sessionFindRanges(document.body as unknown as HTMLElement, "a  b").length, 1);
-		assert.equal(sessionFindRanges(document.body as unknown as HTMLElement, "a b").length, 1);
+		assert.equal(sessionFindRanges(document.body as unknown as HTMLElement, "a  b").length, 2);
+		const ranges = sessionFindRanges(document.body as unknown as HTMLElement, "a b");
+		assert.equal(ranges.length, 2);
+		assert.equal(ranges[0]!.toString(), "a  b");
+		assert.equal(ranges[1]!.toString(), "a b");
 	});
 
 	it("empty query returns no ranges", () => {

@@ -116,6 +116,25 @@ class StaticRangeLike {
 	}
 }
 
+/** The matches of one marked part (`data-find-part`), in displayed order. A
+ *  hidden part, or one inside a hidden ancestor, has none. */
+export function partFindRanges(part: HTMLElement, query: string): Range[] {
+	if (!query || !displayedRoot(part)) return [];
+	const ranges: Range[] = [];
+	for (const run of displayRuns(part)) {
+		for (const match of findSessionTextMatches(run.text, query)) {
+			const start = run.characters[match.start]!.start;
+			const end = run.characters[match.end - 1]!.end;
+			const native = part.ownerDocument.createRange?.();
+			const range = typeof native?.setStart === "function" ? native : (new StaticRangeLike() as unknown as Range);
+			range.setStart(start.node, start.offset);
+			range.setEnd(end.node, end.offset);
+			ranges.push(range);
+		}
+	}
+	return ranges;
+}
+
 export function sessionFindRanges(scope: HTMLElement, query: string): Range[] {
 	if (!query) return [];
 	const roots = [
