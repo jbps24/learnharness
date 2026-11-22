@@ -63,6 +63,10 @@ tail = 60
 kind = "command"
 dir = "build-mutate"
 link = ["node_modules"]
+# Fail only in the mutation copy (node_modules is a symlink there, and it has no git index): the two payload tests
+# see dependencies resolve outside the tree, the bundle test's `git ls-files` sees nothing. Maintainer, 2026-11-21.
+skip_tests = ["tests/next-compression-drain.test.ts", "tests/provider-runtime-payload.test.ts",
+              "tests/plugin-authoring-bundle.test.ts"]
 
 [allow]                      # Bash commands (each with any arguments) the editing models may run
 build = ["npm test", "npm run typecheck", "npm run lint", "npx tsx", "npx tsc", "npx eslint"]
