@@ -36,7 +36,11 @@ format = []                  # the repo has no formatter; ESLint is a gate
 [suites]
 kind = "command"
 run = ["npm", "test", "--silent"]
-# a mutant first runs only the test files named after its source file
+# a mutant runs the test files named after its source file, then those that import it directly, then those that
+# import it through other files, then the rest: each stage only if the ones before leave it alive (run_files wins
+# over run_filtered). test_files: what `run` runs.
+run_files = ["env", "NODE_ENV=test", "npx", "tsx", "--test", "{files}"]
+test_files = ["tests/*.test.ts", "tests/*.test.tsx"]
 run_filtered = ["sh", "-c", "NODE_ENV=test npx tsx --test $(ls tests/*{filter}*.test.ts tests/*{filter}*.test.tsx 2>/dev/null)"]
 timeout = 900
 suffix = ".test"
@@ -63,6 +67,11 @@ tail = 60
 kind = "command"
 dir = "build-mutate"
 link = ["node_modules"]
+# 3 copies side by side (10 cores; the whole suite alone keeps ~5 busy for ~260 s). The timeout leaves room for a
+# whole-suite stage slowed by the other copies: a run over it counts as caught. 2026-11-22.
+workers = 3
+timeout = 900
+import_aliases = { "@/" = "" }  # tsconfig paths: "@/*" -> "./*"
 # Fail only in the mutation copy (node_modules is a symlink there, and it has no git index): the two payload tests
 # see dependencies resolve outside the tree, the bundle test's `git ls-files` sees nothing. Maintainer, 2026-11-21.
 skip_tests = ["tests/next-compression-drain.test.ts", "tests/provider-runtime-payload.test.ts",
