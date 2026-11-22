@@ -71,7 +71,7 @@ import { persistTurn } from "../src/server/turn-service.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { jobStore } from "../src/store/jobs.ts";
 import { createJobRunner, pdfModelOverride, researchModelOverride } from "../src/agent/subagents/runner.ts";
-import { providerKeyMissing, type ModelSlotName } from "../src/core/settings.ts";
+import { BREAK_DEFAULTS, providerKeyMissing, type ModelSlotName } from "../src/core/settings.ts";
 import type { PiEngine } from "../src/agent/models.ts";
 import type { SearchProvider } from "../src/core/search.ts";
 import { PATHS } from "../config.ts";
@@ -514,6 +514,8 @@ describe("dispatch (async protocol §2)", () => {
 			chatStore,
 			jobStore,
 			spawn: (job, input) => void testRunner.runJob(job.id, input),
+			breaks: () => ({ ...BREAK_DEFAULTS }),
+			now: () => 1_000_000,
 		});
 		// The handler hands the factory the native build options — the
 		// record IS the agent state (Wave B: no adapter conversion).

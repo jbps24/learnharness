@@ -57,7 +57,7 @@ const { loadLearnerImage } = await import("../src/agent/tools/learner-image.ts")
 const { createProberTools, createTeacherTools } = await import("../src/agent/tools.ts");
 const { practiceTools } = await import("../src/agent/tools/practice.ts");
 const { parseAgentSettingsBody } = await import("../src/server/settings-body.ts");
-const { sanitizeUserSettings } = await import("../src/core/settings.ts");
+const { sanitizeUserSettings, BREAK_DEFAULTS } = await import("../src/core/settings.ts");
 const { expandFolder } = await import("../src/server/file-access.ts");
 const { AgentSection, composeAddFolder, composeRemoveFolder, composeFileRestriction, isFolderEntry } = await import("../components/settings/agent-section.tsx");
 let policy: FileAccessPolicy = { restricted: false, folders: [] };
@@ -216,7 +216,7 @@ describe("live policy and all learner-source surfaces", () => {
 		let snapshots = 0;
 		let jobs = 0;
 		const ctx = { chatId: "synthetic", chatStore: { getChat: () => null, saveImageSnapshot: () => { snapshots++; } } as unknown as ChatStore,
-			jobStore: { findJobByToolCallId: () => undefined, createJob: () => { jobs++; throw new Error("must not create a refused job"); } } as unknown as JobStore, spawn: () => {}, deliver: () => {} };
+			jobStore: { findJobByToolCallId: () => undefined, createJob: () => { jobs++; throw new Error("must not create a refused job"); } } as unknown as JobStore, spawn: () => {}, deliver: () => {}, breaks: () => ({ ...BREAK_DEFAULTS }), now: () => 1_000_000 };
 		for (const tools of [createProberTools(ctx), createTeacherTools(ctx), practiceTools({ ...ctx, jobs: ctx })]) {
 			await assert.rejects(tools.read!.execute!("x", { path: path.join(outside, "secret.txt") }), boundary);
 			await assert.rejects(tools.ls!.execute!("x", { path: outside }), boundary);

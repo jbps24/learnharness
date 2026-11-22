@@ -516,6 +516,16 @@ export interface CompactionSettings {
 	includeReasoning?: boolean;
 }
 
+export interface BreakSettings {
+	enabled?: boolean;
+	intervalMinutes?: number;
+	lengthMinutes?: number;
+}
+
+export const BREAK_DEFAULTS = { enabled: true, intervalMinutes: 45, lengthMinutes: 10 } as const;
+export const BREAK_INTERVAL_RANGE = { min: 20, max: 90, step: 5 } as const;
+export const BREAK_LENGTH_RANGE = { min: 5, max: 20, step: 1 } as const;
+
 /** THE record. Every section optional (delta); unknown top-level keys are
  *  preserved verbatim by the sanitizer (forward-compat with newer records). */
 export interface UserSettings {
@@ -533,6 +543,7 @@ export interface UserSettings {
 	appearance?: AppearanceSettings;
 	graph?: GraphSettings;
 	compaction?: CompactionSettings;
+	breaks?: BreakSettings;
 	[key: string]: unknown;
 }
 
@@ -892,6 +903,23 @@ function sanitizeCompaction(raw: Record<string, unknown>): CompactionSettings {
 	return out;
 }
 
+function sanitizeBreaks(raw: Record<string, unknown>): BreakSettings {
+	const out: BreakSettings = {};
+	const enabled = boolOrDrop(raw.enabled);
+	if (enabled !== undefined) out.enabled = enabled;
+	const interval = raw.intervalMinutes;
+	if (typeof interval === "number" && Number.isFinite(interval)) {
+		const { min, max, step } = BREAK_INTERVAL_RANGE;
+		out.intervalMinutes = Math.round(Math.min(max, Math.max(min, interval)) / step) * step;
+	}
+	const length = raw.lengthMinutes;
+	if (typeof length === "number" && Number.isFinite(length)) {
+		const { min, max } = BREAK_LENGTH_RANGE;
+		out.lengthMinutes = Math.round(Math.min(max, Math.max(min, length)));
+	}
+	return out;
+}
+
 /**
  * Coerce arbitrary JSON (disk file, network body) into a valid delta record:
  * known fields validated strictly (invalid ones drop/clamp per module doc),
@@ -944,6 +972,9 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 	}
 	if (r.compaction !== undefined && r.compaction !== null && typeof r.compaction === "object") {
 		out.compaction = sanitizeCompaction(r.compaction as Record<string, unknown>);
+	}
+	if (r.breaks !== undefined && r.breaks !== null && typeof r.breaks === "object" && !Array.isArray(r.breaks)) {
+		out.breaks = sanitizeBreaks(r.breaks as Record<string, unknown>);
 	}
 	// Unknown top-level keys ride along untouched (forward-compat). One
 	// known-DEAD key is stripped instead of riding: `chat` (the old

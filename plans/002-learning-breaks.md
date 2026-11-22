@@ -259,15 +259,64 @@ The inputs and conditions most likely to bite a learner that no part's tests tar
 
 ---
 
+## Part 9 — Follow-ups decided after the build
+
+**Goal.** Five choices the first build left open, settled by the maintainer on 2026-11-21, and one addition: the learner sees the learning clock in minutes below the composer. Nothing else changes.
+
+**Files.**
+- `src/core/breaks.ts`: `formatAway` and `breakCountdown`.
+- `src/agent/tools.ts`: `TeacherToolContext.breaks` and `.now` become required; `createTeacherTools` loses its fallback (enabled / 45 / 5 / `Date.now`). Every place that builds a `TeacherToolContext` (including `src/agent/teacher-agent.ts` and the tests that call `createTeacherTools`, `createProberTools` or `practiceTools` with one) passes them; tests pass a fixed `BREAK_DEFAULTS`-based value and a fixed clock.
+- `src/server/break-cut-prep.ts`: `prepareUnitCutDuringBreak` returns at once, without preparing, when `runningUnit(chatId)` (`src/server/compaction.ts`) is not `undefined`.
+- `components/break-divider.tsx`: `BreakDivider` gains `error?: string`. In `offered` state with an error, one line under the buttons (`data-testid="break-divider-error"`) shows it; the buttons stay usable.
+- `components/chat.tsx`: when the Take or Skip POST fails, the divider gets the server's `error` text from the JSON body (e.g. `"A turn is running."`, `"No break offer is open."`), or `"Couldn't reach the app. Try again."` when the request itself fails or the body has no `error`. The next Take or Skip click clears it.
+- `src/core/breaks.ts`: new `learningMinutes(clock: LearningClock): number`: `0` when `clock.awayMs !== null` (a reset), else `floor(clock.learningMs / 60 000)`.
+- `components/stats-bar.tsx`: `StatsBar` gains `learningMinutes?: number`. When defined, it renders `"<n> min"` in muted text (`data-testid="learning-minutes"`) directly before the dictation slot, after the session data. Undefined renders nothing (home, `/chat/new`, practice).
+- `components/chat.tsx`: for a teaching chat (not practice) it passes `learningMinutes(learningClock(<native messages>, <side chats>, breakTimings(<resolved breaks settings>), Date.now()))` to `StatsBar`, recomputed every 15 s and on every transcript change. Shown whether breaks are enabled or not. Plain minutes, never hours.
+- New tests: `tests/break-followups.test.ts`, `tests/render-break-divider-error.test.tsx`, `tests/render-learning-minutes.test.tsx`.
+
+**Rules and examples.**
+- `formatAway(ms)`: whole minutes `m = floor(ms / 60 000)`. From 24 h: days, then whole hours, leaving out a zero hours part. From 1 h to under 24 h: hours, then minutes, leaving out a zero minutes part. Under 1 h: minutes.
+  - 18 min → `"18 min"`; 0 → `"0 min"`; 134 min → `"2 h 14 min"`; 120 min → `"2 h"`; 23 h 59 min → `"23 h 59 min"`; 24 h → `"1 d"`; 72 h → `"3 d"`; 74 h 30 min → `"3 d 2 h"`.
+- `breakCountdown(takenAt, lengthMinutes, now)`: let `over = elapsed − total`. Not over while `over < 1000` ms: label is the remaining time `m:ss` rounded up, never below `"0:00"`. From `over ≥ 1000`: `over: true`, label `"+m:ss"` of `floor(over / 1000)`. `"+0:00"` never appears. `progress` unchanged (elapsed / total, capped at 1).
+  - `(0, 10, 19 000)` → `"9:41"`, not over; `(0, 10, 600 000)` → `"0:00"`, not over, progress 1; `(0, 10, 600 999)` → `"0:00"`, not over; `(0, 10, 601 000)` → `"+0:01"`, over; `(0, 10, 683 000)` → `"+1:23"`, over.
+- `learningMinutes`: learningMs 0 → 0; 38 min 59 s → 38; 72 min → 72 (never hours); any clock with `awayMs` set → 0.
+- `prepareUnitCutDuringBreak` with a running unit cut for the chat: no summarizer call, no registry entry; without one, behaviour as in Part 5.
+
+**Tests.** Every example above; `createTeacherTools` given `breaks` returning `{ enabled: true, intervalMinutes: 30, lengthMinutes: 7 }` and a fixed `now` makes `suggest_break`'s window checks use 30/7 and that clock; preparation skipped while `setRunningUnit(chatId, 2)` is set and done after it is cleared (summarizer stubbed and counted); `BreakDivider` offered with `error` renders the line and enabled buttons, without `error` renders no line, and in `taken` renders no line even with `error`; `StatsBar` with `learningMinutes={38}` renders `38 min` before the dictation slot's content, and without the prop renders no `learning-minutes` element.
+
+---
+
+## Part 10 — A long absence skips an open offer
+
+**Goal.** A break offer still open when the learner goes away counts as skipped once the absence is reached: the server refuses Take/Skip for it, and the divider shows it as skipped (maintainer, 2026-11-21). Nothing else changes.
+
+**Files.**
+- `src/core/breaks.ts`, `breakState`: in the final away check (`activityEnd !== null && now − activityEnd ≥ timings.lengthMs`, ~l.254), a `latest` whose outcome is `pending` becomes `{ ...latest, outcome: "skipped" }`. `skipsInRow` and `nextOpenAtMs` are reset there as today (the away reset wins; this skip is not counted).
+- `src/core/breaks.ts`: new `dividerState(state: "offered" | "taken" | "skipped" | "ended", away: boolean)`: `"skipped"` when `state === "offered"` and `away`, else `state`.
+- `components/chat.tsx`: where the `data-break` part is rendered as `BreakDivider`, its state goes through `dividerState(data.state, away)`, with `away = learningClock(<native messages>, <side chats>, breakTimings(<break settings>), Date.now()).awayMs !== null`, computed next to `learningMinutesNow` on the same 15 s tick and transcript changes. For a practice chat `away` is `false`.
+- New tests: `tests/break-away-skip.test.ts`.
+
+**Rules and examples** (timings 45 / 10 min, one ok `suggest_break` result at 30 min of learning, no learner action after it).
+- `breakState(…, now = activity end + 9 min 59 s).latest.outcome` → `"pending"`; at activity end + 10 min → `"skipped"`; `skipsInRow` → 0 either way after the away reset.
+- With a `break-taken` marker for that call before the absence, the outcome stays `"taken"` at any `now`; with `break-ended`, `"ended"`.
+- The break route (`app/api/chats/[id]/break/route.ts`), Take after the absence → 400 `{ error: "No break offer is open." }`.
+- `dividerState("offered", true)` → `"skipped"`; `("offered", false)` → `"offered"`; `("taken", true)` → `"taken"`; `("ended", true)` → `"ended"`; `("skipped", false)` → `"skipped"`.
+
+**Tests.** Every example above, `breakState` with a fixed clock and fixed message timestamps; the route case through the route handler as in `tests/break-route.test.ts`'s style, with new helpers (no reuse of its fixtures).
+
+---
+
 ## Status per part
 
 | Part | Status | Build id |
 |---|---|---|
-| 1 Break settings | — | |
-| 2 Markers and the learning clock | — | |
-| 3 The suggest_break tool | — | |
-| 4 Server wiring | — | |
-| 5 Cut preparation | — | |
-| 6 What the learner sees | — | |
-| 7 Teacher doctrine | — | |
-| 8 Docs | — | |
+| 1 Break settings | green 2026-11-21 (run 20261121-130954-002-part-1; fix round 20261121-185249-002-part-1: settings route test) | - |
+| 2 Markers and the learning clock | green 2026-11-21 (run 20261121-133958-002-part-2) | - |
+| 3 The suggest_break tool | green 2026-11-21 (run 20261121-141612-002-part-3) | - |
+| 4 Server wiring | green 2026-11-21 (run 20261121-162409-002-part-4 after the ladder's lock fix, first run 20261121-144624 stopped on the lock; Take wires prepareUnitCutDuringBreak in run 20261121-181154-002-part-4) | - |
+| 5 Cut preparation | green 2026-11-21 (run 20261121-163542-002-part-5; fix round 20261121-190151-002-part-5: runUnitCut order restored) | - |
+| 6 What the learner sees | green 2026-11-21 (run 20261121-170452-002-part-6) | - |
+| 7 Teacher doctrine | green 2026-11-21 (run 20261121-174726-002-part-7) | - |
+| 8 Docs | green 2026-11-21 (run 20261121-183939-002-part-8; first run 20261121-175943 stopped on the unwired Take call) | - |
+| 9 Follow-ups | green 2026-11-21 (run 20261121-192430-002-part-9) | - |
+| 10 Absence skips an open offer | green 2026-11-21 (run 20261121-224046-002-part-10) | - |

@@ -86,7 +86,11 @@ export interface LhMarkerMessage {
 		| "side-question"
 		| "side-question-told"
 		| "lesson-record"
-		| "units-note";
+		| "units-note"
+		| "break-note"
+		| "break-taken"
+		| "break-skipped"
+		| "break-ended";
 	/** The model-facing text ("" for plan blocks — UI-only). */
 	content: string;
 	display: boolean;
@@ -405,6 +409,65 @@ export function newUnitsNoteMessage(): LhMarkerMessage {
 	};
 }
 
+/** A break session note (plan 002 part 2). Wire-only: the view renders
+ *  nothing for it. A fresh window note's windowId is its own id. */
+export function newBreakNoteMessage(
+	kind: "window" | "escalation" | "away",
+	text: string,
+	windowId?: string,
+	now: number = Date.now(),
+): LhMarkerMessage {
+	const id = newMessageId();
+	return {
+		id,
+		role: "custom",
+		customType: "break-note",
+		content: text,
+		display: false,
+		details: { kind, windowId: kind === "window" ? (windowId ?? id) : windowId },
+		timestamp: now,
+	};
+}
+
+/** The learner took the suggested break. UI-only: toLlmMessages filters it. */
+export function newBreakTakenMessage(toolCallId: string, lengthMinutes: number, now: number = Date.now()): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "break-taken",
+		content: "",
+		display: true,
+		details: { toolCallId, lengthMinutes },
+		timestamp: now,
+	};
+}
+
+/** The learner declined the suggested break. UI-only: toLlmMessages filters it. */
+export function newBreakSkippedMessage(toolCallId: string, now: number = Date.now()): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "break-skipped",
+		content: "",
+		display: true,
+		details: { toolCallId },
+		timestamp: now,
+	};
+}
+
+/** The learner is back from a break; the text re-orients the teacher. */
+export function newBreakEndedMessage(toolCallId: string, breakMs: number, text: string, now: number = Date.now()): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "break-ended",
+		content: text,
+		display: true,
+		details: { toolCallId, breakMs },
+		timestamp: now,
+	};
+}
+
 /** The problem-dismissal marker (ask-style discard, owner 2026-10-04):
  *  UI-ONLY — toLlmMessages filters it. The model's face arrives later, at
  *  the user's next input, as the synthesized conclude pair
@@ -718,6 +781,7 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 			// full-history fallback, including the summary text.
 			if (marker.customType === "compaction" && head !== null) continue;
 			if (marker.customType === "lesson-record") continue;
+				if (marker.customType === "break-taken" || marker.customType === "break-skipped") continue;
 			const problemSubmission = marker.customType === "plugin-problem-submission" ? readPluginProblemSubmission(marker.details) : null;
 			out.push({
 				role: "user",
@@ -1002,8 +1066,8 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "system" || message.role === "assistant") return "neutral";
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
-		if (["practice-thinking", "plugin-problem-submission", "practice-next"].includes(message.customType)) return "learner";
-		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "lesson-record", "units-note"].includes(message.customType) ? "neutral" : "unrecognizable";
+		if (["practice-thinking", "plugin-problem-submission", "practice-next", "break-taken", "break-skipped", "break-ended"].includes(message.customType)) return "learner";
+		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "lesson-record", "units-note", "break-note"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {
 		const pluginAnswer = readPluginQuestionAnswer(message.details);

@@ -50,6 +50,7 @@ const steerRoute = await import("../app/api/chats/[id]/steer/route.ts");
 const streamRoute = await import("../app/api/chats/[id]/stream/route.ts");
 const recordRoute = await import("../app/api/chats/[id]/route.ts");
 import { PATHS } from "../config.ts";
+import { BREAK_DEFAULTS } from "../src/core/settings.ts";
 
 // The key-presence turn gate (provider-key interlude, 2026-09-25): scripted
 // turns pin openrouter per chat — the gate reads env-first truth, so the
@@ -1321,7 +1322,7 @@ it("explain tool call persists as a pending part; the free-text answer reveals t
 
 	// Free-recall armed: the mechanic swap is the ONLY change to the registry.
 	const tools = createTeacherTools(
-		{ chatId: chat.id, chatStore, jobStore, spawn: () => {} },
+		{ chatId: chat.id, chatStore, jobStore, spawn: () => {}, breaks: () => ({ ...BREAK_DEFAULTS }), now: () => 1_000_000 },
 		{ explain: true },
 	);
 	assert.ok(tools.explain && !tools.quiz, "explain armed, quiz dropped — one quizzing tool");

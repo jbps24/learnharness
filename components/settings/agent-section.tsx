@@ -63,12 +63,15 @@ import { PromptSegmentDialog, type PromptDeleteOutcome, type PromptSaveOutcome }
 import { PromptSegmentRow, promptSegmentName } from "./prompt-segment-row";
 import type React from "react";
 import {
+	BREAK_INTERVAL_RANGE,
+	BREAK_LENGTH_RANGE,
 	COMPACTION_THRESHOLD_FLOOR,
 	MODEL_SLOTS,
 	SEARCH_ENGINES,
 	resolveSettings,
 	isFileAccessFolder,
 	type AgentSettings,
+	type BreakSettings,
 	type CompactionSettings,
 	type GraphSettings,
 	type ModelSlotName,
@@ -367,10 +370,12 @@ export function AgentSection({
 	models,
 	graph,
 	compaction,
+	breaks,
 	onSectionChange,
 	onDeletePromptOverride,
 	onModelsChange,
 	onCompactionChange,
+	onBreaksChange,
 }: {
 	agent: AgentSettings | undefined;
 	fileAccessError?: string | null;
@@ -383,6 +388,7 @@ export function AgentSection({
 	/** The `compaction` section — its own PUT (the threshold is engine
 	 *  behavior, not an agent-section key; owner round 14, Agent tab). */
 	compaction: CompactionSettings | undefined;
+	breaks?: BreakSettings;
 	/** Writes the composed WHOLE agent section (replace-PUT discipline). */
 	onSectionChange: (next: AgentSettings, confirms?: (stored: AgentSettings) => boolean) => boolean | Promise<boolean>;
 	/** Order the override DELETE against Settings' full-record acknowledgements. */
@@ -391,6 +397,7 @@ export function AgentSection({
 	onModelsChange: (next: ModelsSettings) => void;
 	/** Writes the whole compaction section (replace-PUT discipline). */
 	onCompactionChange: (next: CompactionSettings) => boolean | Promise<boolean>;
+	onBreaksChange?: (next: BreakSettings) => boolean | Promise<boolean>;
 }) {
 	const { catalog: body, failed: catalogFailed, refresh: refreshCatalog } = useModelCatalog();
 	const catalog = body?.models;
@@ -598,6 +605,7 @@ export function AgentSection({
 	const resolvedCompaction = resolveSettings(
 		compaction === undefined ? null : { version: 1, compaction },
 	).compaction;
+	const resolvedBreaks = resolveSettings(breaks === undefined ? null : { version: 1, breaks }).breaks;
 
 	return (
 		<>
@@ -964,6 +972,63 @@ export function AgentSection({
 						onChange={(includeReasoning) => onCompactionChange({ ...compaction, includeReasoning })}
 					/>
 				</SettingsRow>
+			</SettingsGroup>
+
+			<SettingsGroup label="Breaks" testid="group-breaks">
+				<SettingsRow
+					label="Break suggestions"
+					hint="Off = no break offers; you can still ask for a break"
+					testid="breaks-row-enabled"
+				>
+					<Toggle
+						label="Break suggestions"
+						checked={resolvedBreaks.enabled}
+						onChange={(enabled) => onBreaksChange?.({ ...breaks, enabled })}
+					/>
+				</SettingsRow>
+				{resolvedBreaks.enabled && (
+					<>
+						<SettingsRow
+							label="Break interval"
+							hint="minutes of learning (20–90)"
+							testid="breaks-row-interval"
+						>
+							<CommitInput
+								type="number"
+								value={String(resolvedBreaks.intervalMinutes)}
+								ariaLabel="break interval"
+								testid="input-breaks-interval"
+								onCommit={(v) => {
+									const n = Number(v);
+									if (v === "" || !Number.isFinite(n)) return false; // bad input: no write
+									// Mirror the server's strict write: clamp, then snap to the step.
+									const { min, max, step } = BREAK_INTERVAL_RANGE;
+									const snapped = Math.round(Math.min(max, Math.max(min, n)) / step) * step;
+									return onBreaksChange?.({ ...breaks, intervalMinutes: snapped }) ?? false;
+								}}
+							/>
+						</SettingsRow>
+						<SettingsRow
+							label="Break length"
+							hint="minutes (5–20)"
+							testid="breaks-row-length"
+						>
+							<CommitInput
+								type="number"
+								value={String(resolvedBreaks.lengthMinutes)}
+								ariaLabel="break length"
+								testid="input-breaks-length"
+								onCommit={(v) => {
+									const n = Number(v);
+									if (v === "" || !Number.isFinite(n)) return false; // bad input: no write
+									const { min, max } = BREAK_LENGTH_RANGE;
+									const rounded = Math.round(Math.min(max, Math.max(min, n)));
+									return onBreaksChange?.({ ...breaks, lengthMinutes: rounded }) ?? false;
+								}}
+							/>
+						</SettingsRow>
+					</>
+				)}
 			</SettingsGroup>
 
 			<SettingsGroup label="System prompts" testid="group-prompts">
