@@ -14,6 +14,8 @@ Today **Retry** exists only for a failed turn (`{ type: "retry" }`, the error ba
 
 ## Owner decisions (2026-11-22)
 
+Amended 2026-11-22: plan 007 runs before this plan, and its two course notes are skipped like the break note (owner-approved).
+
 1. Only the **latest** teacher reply can be retried, also one that ends with an open question or check.
 2. The old reply is **hidden and kept on disk**: it is moved out of `messages` into a new record field, so the chat, the teacher and every other reader stop seeing it.
 3. Only **effect-free** replies can be retried: text, read-only lookups, and questions for the learner. A reply that started a job, wrote the plan, concluded, offered a break or did anything else lasting gets no Retry.
@@ -34,7 +36,7 @@ Today **Retry** exists only for a failed turn (`{ type: "retry" }`, the error ba
   - `ChatInput` gains `| { type: "retry-reply" }`; `parseChatInput` (the `switch` with `case "retry"`) gains `case "retry-reply": return { type: "retry-reply" };`.
   - New exported constant `REPLY_RETRY_READ_ONLY_TOOLS = ["find", "find_candidates", "grep", "list_propositions", "list_sessions", "ls", "pdf", "pdf_extract", "pdf_info", "pdf_search", "read", "show_image", "web_fetch", "web_fetch_pdf", "web_search"] as const`.
   - New exported pure function `retryableReply(messages: readonly LhMessage[]): string[] | null`. It walks back from the end:
-    - a `custom` message that is a side-question marker (`isSideQuestionMarker`) or has `customType` `"break-note"`, `"graph-context"` or `"units-note"` is **skipped** (stays, not collected);
+    - a `custom` message that is a side-question marker (`isSideQuestionMarker`) or has `customType` `"break-note"`, `"graph-context"`, `"units-note"`, `"course-files"` or `"course-method"` is **skipped** (stays, not collected). The last two are plan 007's course notes, which run before this plan;
     - an `assistant` message is **collected**;
     - a `toolResult` whose `toolName` is not in `QUESTION_TOOLS` is **collected**;
     - any other message **stops** the walk and is the **input**.
@@ -53,6 +55,7 @@ Today **Retry** exists only for a failed turn (`{ type: "retry" }`, the error ba
 - `explain` answer (`toolResult`, `toolName: "explain"`), `break-note`, then an assistant with text only → the assistant id (the break note stays out). This is the Regelungssysteme shape.
 - `user`, then assistant calling `pdf` (`toolUse`), `toolResult` `pdf`, then assistant text plus an `explain` call with no result (`toolUse`) → the three ids in order.
 - A side-question marker after the reply → still retryable, the marker id not returned.
+- `user`, a `course-files` note and a `course-method` note (plan 007), then an assistant with text only → the assistant id (both notes stay out).
 - Not retryable (`null`): an empty record; the last message is a `user`; the last assistant has `stopReason` `"error"` or `"aborted"`; the reply calls `demo` (with its `toolResult`), `suggest_break`, `plan_init`, `conclude` or `probe_done`; a `compaction` or `lesson-record` or `plan-block` marker between input and reply; the input is a `subagent-steer` custom message; the input is a `toolResult` of `demo`.
 
 ## Part 2 — Store and server: retire the reply and rerun the turn
