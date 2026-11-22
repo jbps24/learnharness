@@ -1128,14 +1128,14 @@ export function Chat({
 
 	// Learning breaks (plan 002 part 6): Take/Skip are silent appends through
 	// the break route; Continue is a chat input that composes the teacher turn.
-	const [breakSettings, setBreakSettings] = useState<{ intervalMinutes: number; lengthMinutes: number }>(BREAK_DEFAULTS);
+	const [breakSettings, setBreakSettings] = useState<{ intervalMinutes: number; lengthMinutes: number; resetMinutes: number }>(BREAK_DEFAULTS);
 	const breakLengthMinutes = breakSettings.lengthMinutes;
 	useEffect(() => {
 		fetch("/api/settings")
 			.then((r) => r.json() as Promise<{ settings: Parameters<typeof resolveSettings>[0] }>)
 			.then((body) => {
-				const { intervalMinutes, lengthMinutes } = resolveSettings(body.settings).breaks;
-				setBreakSettings({ intervalMinutes, lengthMinutes });
+				const { intervalMinutes, lengthMinutes, resetMinutes } = resolveSettings(body.settings).breaks;
+				setBreakSettings({ intervalMinutes, lengthMinutes, resetMinutes });
 			})
 			.catch(() => {});
 	}, []);
@@ -1152,16 +1152,16 @@ export function Chat({
 	const learningMinutesNow = useMemo(
 		() =>
 			clockMounted
-				? learningMinutes(learningClock(nativeMessages, sideThread.threads, breakTimings(breakSettings), Date.now()))
+				? learningMinutes(learningClock(nativeMessages, sideThread.threads, breakTimings(breakSettings), Date.now(), { turnRunning: localStream || turnInFlight }))
 				: undefined,
-		[nativeMessages, sideThread.threads, breakSettings, clockTick, clockMounted],
+		[nativeMessages, sideThread.threads, breakSettings, clockTick, clockMounted, localStream, turnInFlight],
 	);
 	const breakAway = useMemo(
 		() =>
 			clockMounted && kind !== "practice"
-				? learningClock(nativeMessages, sideThread.threads, breakTimings(breakSettings), Date.now()).awayMs !== null
+				? learningClock(nativeMessages, sideThread.threads, breakTimings(breakSettings), Date.now(), { turnRunning: localStream || turnInFlight }).awayMs !== null
 				: false,
-		[nativeMessages, sideThread.threads, breakSettings, clockTick, clockMounted, kind],
+		[nativeMessages, sideThread.threads, breakSettings, clockTick, clockMounted, kind, localStream, turnInFlight],
 	);
 	const [breakPosting, setBreakPosting] = useState(false);
 	const [breakError, setBreakError] = useState<string | undefined>();

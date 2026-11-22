@@ -11,7 +11,7 @@ import {
 } from "../src/core/native-messages.ts";
 
 const MIN = 60_000;
-const TIMINGS = breakTimings({ intervalMinutes: 45, lengthMinutes: 10 });
+const TIMINGS = breakTimings({ intervalMinutes: 45, lengthMinutes: 10, resetMinutes: 10 });
 
 function suggestBreakPair(callId: string, timestamp: number): LhMessage[] {
 	return [

@@ -9,7 +9,7 @@ import { teachTags } from "../../core/units.ts";
 export interface BreakToolContext {
 	chatId: string;
 	chatStore: ChatStore;
-	breaks: () => { enabled: boolean; intervalMinutes: number; lengthMinutes: number };
+	breaks: () => { enabled: boolean; intervalMinutes: number; lengthMinutes: number; resetMinutes: number };
 	now: () => number;
 }
 

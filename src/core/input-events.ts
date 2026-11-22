@@ -50,6 +50,7 @@ import {
 	pendingProblemDismissalOf,
 } from "./native-messages.ts";
 import { breakState, breakTimings } from "./breaks.ts";
+import { BREAK_DEFAULTS } from "./settings.ts";
 import { QUESTION_TOOLS, toolQuestionKind } from "./pending.ts";
 import { isPluginQuestionJson, type JsonValue, type PluginQuestionOccurrence } from "./plugin-questions.ts";
 import { preparePluginProblemSubmissionImages, type PluginProblemSubmissionImages } from "./plugin-submissions.ts";
@@ -354,7 +355,7 @@ export function inputAppends(
 			return [...dismissalConclusion(record), newNextMessage()];
 		}
 		case "break-continue": {
-			const latest = breakState(record.messages, undefined, breakTimings({ intervalMinutes: 45, lengthMinutes: 10 }), true, _now).latest;
+			const latest = breakState(record.messages, undefined, breakTimings(BREAK_DEFAULTS), true, _now).latest;
 			if (!latest || latest.outcome !== "taken" || latest.toolCallId !== input.toolCallId || latest.takenAt === undefined) {
 				throw new ChatInputError("No break is running.");
 			}

@@ -61,4 +61,4 @@ It also fixes a display bug. While a learner-triggered answer is still streaming
 
 | Part | Status | Build id |
 |---|---|---|
-| 1 Reset setting and running-answer fix | not run | - |
+| 1 Reset setting and running-answer fix | green 2026-11-22 (run 20261122-101547-004-part-1; fix round 20261122-113157-004-part-1: CONTEXT.md break length) | - |

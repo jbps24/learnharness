@@ -13,7 +13,7 @@ import type { SideChatThread } from "../src/core/contracts/chat.ts";
 
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
-const TIMINGS = breakTimings({ intervalMinutes: 45, lengthMinutes: 10 });
+const TIMINGS = breakTimings({ intervalMinutes: 45, lengthMinutes: 10, resetMinutes: 10 });
 
 const userAt = (id: string, timestamp: number): LhMessage => ({
 	...newUserMessage(`msg_${id}`),

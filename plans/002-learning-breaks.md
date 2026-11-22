@@ -51,7 +51,7 @@ The map settled the design. These smaller choices were made while writing the sp
 8. **Notes ride learner inputs only.** Window, escalation, re-sent and away notes are appended only to learner inputs of a teaching turn: `text`, `answer`, `plugin-question-answer`, `plugin-problem-submission`, `thinking`. Not to automatic wakes, retries, the SDK `continue`, or `break-continue`.
 9. **A prepared lesson record is used only on an exact match.** The span the real cut summarizes must hold exactly the messages the preparation summarized (markers excluded) under the same previous record. Otherwise the cut runs as today. Its usage is recorded at the cut, as today.
 10. **The divider doesn't show minutes of learning.** The view has no clock, and the prototype's "46 min of learning" is dropped.
-11. **The away note's threshold is the break length**, the same gap that resets the clock (ticket 08).
+11. **The away note's threshold is the break length**, the same gap that resets the clock (ticket 08). Superseded by plan 004: the threshold is `breaks.resetMinutes`.
 
 ---
 

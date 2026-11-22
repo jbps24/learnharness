@@ -15,7 +15,7 @@ import {
 import type { ChatStore, JobStore } from "../src/core/ports.ts";
 
 const T0 = 1_700_000_000_000;
-const DEFAULT_BREAKS = { enabled: true, intervalMinutes: 45, lengthMinutes: 5 };
+const DEFAULT_BREAKS = { enabled: true, intervalMinutes: 45, lengthMinutes: 5, resetMinutes: 5 };
 
 const EXPECTED_DESCRIPTION =
 	'Offer the learner a short break. Call it only at a closed point: when a [Session note] says a break is due, or whenever the learner asks for a break (requestedBy "learner"). First say it in one line of ordinary prose about the material (e.g. that the unit is closed and this is a good moment), then call this tool and end your turn. The learner chooses Take or Skip in the app; don\'t ask them again in prose.';

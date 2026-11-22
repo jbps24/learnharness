@@ -10,7 +10,7 @@ import { createFauxCore, createProvider, fauxAssistantMessage, type Api, type Si
 import type { PlanTree } from "../src/core/contracts/plan.ts";
 
 const MIN = 60_000;
-const TIMINGS = breakTimings({ intervalMinutes: 45, lengthMinutes: 10 });
+const TIMINGS = breakTimings({ intervalMinutes: 45, lengthMinutes: 10, resetMinutes: 10 });
 
 let tmpDir: string;
 let POST: typeof import("../app/api/chats/[id]/break/route.ts").POST;

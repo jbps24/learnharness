@@ -40,6 +40,7 @@ import { pluginProblemForCall, type PluginProblemSnapshot } from "./plugin-probl
 import { activeCompactionOf, type CompactionDetails } from "./compaction.ts";
 import { QUESTION_TOOLS } from "./pending.ts";
 import { breakState, breakTimings } from "./breaks.ts";
+import { BREAK_DEFAULTS } from "./settings.ts";
 import type { SubagentArtifactData, SubagentResultMeta } from "./contracts/jobs.ts";
 import type { LessonRecordDetails, PlanBlockData } from "./contracts/chat.ts";
 import type { PlanUnit } from "./contracts/plan.ts";
@@ -386,7 +387,7 @@ function breakPartData(messages: readonly LhMessage[], index: number): Record<st
 	for (let j = index + 1; j < messages.length; j++) {
 		if (isOkBreakResult(messages[j]!)) { end = j; break; }
 	}
-	const s = breakState(messages.slice(0, end), undefined, breakTimings({ intervalMinutes: 45, lengthMinutes: 10 }), true, 0).latest;
+	const s = breakState(messages.slice(0, end), undefined, breakTimings(BREAK_DEFAULTS), true, 0).latest;
 	if (!s) return null;
 	const state = s.outcome === "pending" ? "offered" : s.outcome;
 	const data: Record<string, unknown> = { toolCallId: s.toolCallId, state };

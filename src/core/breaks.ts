@@ -10,6 +10,7 @@ import {
 export interface BreakTimings {
 	intervalMs: number;
 	lengthMs: number;
+	resetMs: number;
 	leadMs: number;
 	escalateMs: number;
 	reofferMs: number;
@@ -19,11 +20,12 @@ const MINUTE_MS = 60_000;
 
 /** The break window's derived timings: lead = interval/9, escalate = reoffer
  *  = interval×4/9, each rounded to whole minutes. */
-export function breakTimings(s: { intervalMinutes: number; lengthMinutes: number }): BreakTimings {
+export function breakTimings(s: { intervalMinutes: number; lengthMinutes: number; resetMinutes: number }): BreakTimings {
 	const escalateMinutes = Math.round((s.intervalMinutes * 4) / 9);
 	return {
 		intervalMs: s.intervalMinutes * MINUTE_MS,
 		lengthMs: s.lengthMinutes * MINUTE_MS,
+		resetMs: s.resetMinutes * MINUTE_MS,
 		leadMs: Math.round(s.intervalMinutes / 9) * MINUTE_MS,
 		escalateMs: escalateMinutes * MINUTE_MS,
 		reofferMs: escalateMinutes * MINUTE_MS,
@@ -111,9 +113,9 @@ interface ClockVisit {
 function replayClock(
 	messages: readonly LhMessage[],
 	sideChats: readonly SideChatThread[] | undefined,
-	lengthMs: number,
+	resetMs: number,
 	visit?: (v: ClockVisit) => void,
-): { startedAt: number | null; activityEnd: number | null } {
+): { startedAt: number | null; activityEnd: number | null; trigger: "learner" | "automatic" | null } {
 	let startedAt: number | null = null;
 	let activityEnd: number | null = null;
 	let trigger: "learner" | "automatic" | null = null;
@@ -121,7 +123,7 @@ function replayClock(
 	let sideAt = 0;
 
 	const act = (time: number, forceReset: boolean): boolean => {
-		const reset = forceReset || startedAt === null || (activityEnd !== null && time - activityEnd >= lengthMs);
+		const reset = forceReset || startedAt === null || (activityEnd !== null && time - activityEnd >= resetMs);
 		if (reset) startedAt = time;
 		activityEnd = forceReset || activityEnd === null ? time : Math.max(activityEnd, time);
 		return reset;
@@ -155,7 +157,7 @@ function replayClock(
 		visit?.({ index: i, time: m.timestamp, reset, startedAt });
 	}
 	drainSide(Number.POSITIVE_INFINITY);
-	return { startedAt, activityEnd };
+	return { startedAt, activityEnd, trigger };
 }
 
 export function learningClock(
@@ -163,9 +165,13 @@ export function learningClock(
 	sideChats: readonly SideChatThread[] | undefined,
 	timings: BreakTimings,
 	now: number,
+	opts?: { turnRunning?: boolean },
 ): LearningClock {
-	const { startedAt, activityEnd } = replayClock(messages, sideChats, timings.lengthMs);
-	if (activityEnd !== null && now - activityEnd >= timings.lengthMs) {
+	const replayed = replayClock(messages, sideChats, timings.resetMs);
+	const { startedAt } = replayed;
+	let { activityEnd } = replayed;
+	if (opts?.turnRunning && replayed.trigger === "learner" && activityEnd !== null) activityEnd = Math.max(activityEnd, now);
+	if (activityEnd !== null && now - activityEnd >= timings.resetMs) {
 		return { learningMs: 0, startedAt: now, awayMs: now - activityEnd };
 	}
 	return { learningMs: startedAt === null ? 0 : now - startedAt, startedAt, awayMs: null };
@@ -190,7 +196,7 @@ export function breakState(
 
 	const learningAt = (time: number, startedAt: number | null) => (startedAt === null ? 0 : time - startedAt);
 
-	const { activityEnd } = replayClock(messages, sideChats, timings.lengthMs, (v) => {
+	const { activityEnd } = replayClock(messages, sideChats, timings.resetMs, (v) => {
 		const m = v.index === null ? null : messages[v.index]!;
 		const learning = learningAt(v.time, v.startedAt);
 		if (m) {
@@ -249,7 +255,7 @@ export function breakState(
 		}
 	});
 
-	if (activityEnd !== null && now - activityEnd >= timings.lengthMs) {
+	if (activityEnd !== null && now - activityEnd >= timings.resetMs) {
 		window = null;
 		skipsInRow = 0;
 		nextOpenAtMs = firstOpenMs;
