@@ -6,7 +6,7 @@ Status: **approved** 2026-11-22. The owner confirmed the product decisions, ever
 
 1. Until this line says **approved**, do not run any part.
 2. Run the parts through the ladder (`execute-plan` skill), e.g. `ladder queue --plan plans/007-course-methods.md --step "Part 1" …`. Part 8 takes `--no-tests-first`.
-3. This plan lives on branch `fix/agy-invented-turns` (worktree `../learnharness-agy-fix`) and runs there **before** plans 005 and 006. Start on a clean tree, after plan 003's work is committed on `feat/antigravity-cli` and merged into this branch.
+3. This plan runs on `feat/antigravity-cli` **before** plans 005 and 006, on a clean tree. Plan 003 is committed and merged (2449ce86, 9f00687c).
 4. After each green part, update "Status per part" at the end of this file. Never re-open the owner decisions.
 
 ## What this builds
