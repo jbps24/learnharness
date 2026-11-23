@@ -56,4 +56,4 @@ agy's `result` event carries the run's whole prose as `result.response` (checked
 
 | Part | Status | Build id |
 |---|---|---|
-| 1 Invented turns and the Sonnet fallback | not started | - |
+| 1 Invented turns and the Sonnet fallback | green, build-review/20261123-213255-005-part-1 | - |

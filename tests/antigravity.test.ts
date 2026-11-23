@@ -6,7 +6,7 @@ import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { getSupportedThinkingLevels, type SimpleStreamOptions, type Tool } from "@earendil-works/pi-ai";
-import { createAntigravityStream, parseActions, type RunAntigravity } from "../src/agent/antigravity/stream.ts";
+import { ANTIGRAVITY_FALLBACK_MODEL, ANTIGRAVITY_NO_ANSWER, createAntigravityStream, inventedTurns, parseActions, type RunAntigravity } from "../src/agent/antigravity/stream.ts";
 import { ANTIGRAVITY_MODELS } from "../src/agent/antigravity/provider.ts";
 import { sanitizeUserSettings } from "../src/core/settings.ts";
 import { toModelDto } from "../src/server/model-catalog.ts";
@@ -113,10 +113,8 @@ test("invalid tool names and missing structured output fail without executing to
 	}
 });
 
-// Gemini sometimes writes its answer as prose and never calls agy's finish
-// tool; agy then reports SUCCESS without structured output (seen Nov 2026 when
-// the prose ran into the print timeout). A second attempt usually answers.
-test("a successful run without structured output is retried once with the same request", async () => {
+// plan 005 part 1: existing test renamed and asserts second run uses --model claude-sonnet-5-5 with equal prompt
+test("a successful run without structured output is retried once on the fallback model", async () => {
 	let index = 0;
 	const responses = [fakeRun(success(undefined)), fakeRun(success({ text: "Second try", toolCalls: [] }))];
 	const run: RunAntigravity = (...args) => responses[index++]!.run(...args);
@@ -125,7 +123,7 @@ test("a successful run without structured output is retried once with the same r
 	assert.equal(result.stopReason, "stop");
 	assert.deepEqual(result.content, [{ type: "text", text: "Second try" }]);
 	assert.equal(responses[1]!.calls[0]!.prompt, responses[0]!.calls[0]!.prompt);
-	assert.deepEqual(responses[1]!.calls[0]!.args, responses[0]!.calls[0]!.args);
+	assert.equal(responses[1]!.calls[0]!.args[responses[1]!.calls[0]!.args.indexOf("--model") + 1], "claude-sonnet-5-5");
 	assert.equal(result.usage.output, 20);
 });
 
@@ -180,4 +178,209 @@ test("Antigravity settings sanitize, validate, and report unknown prices and lim
 	assert.equal(dto.contextWindow, null);
 	assert.equal(dto.maxTokens, null);
 	assert.equal(callCost({ inputTokens: 100, outputTokens: 10 }, "antigravity:default"), null);
+});
+
+function successWith(structured_output: unknown, response?: unknown, output_tokens = 20) {
+	return {
+		...success(structured_output),
+		...(response !== undefined ? { response } : {}),
+		usage: { input_tokens: 100, output_tokens, cache_read_tokens: 30 },
+	};
+}
+
+function replaceModelArg(args: string[], modelId: string): string[] {
+	const index = args.indexOf("--model");
+	if (index === -1) return [...args, "--model", modelId];
+	const next = [...args];
+	next[index + 1] = modelId;
+	return next;
+}
+
+// plan 005 part 1: ANTIGRAVITY_FALLBACK_MODEL equals "claude-sonnet-5-5"
+test("ANTIGRAVITY_FALLBACK_MODEL is claude-sonnet-5-5", () => {
+	assert.equal(ANTIGRAVITY_FALLBACK_MODEL, "claude-sonnet-5-5");
+});
+
+// plan 005 part 1: inventedTurns detects line-start transcript markers and rejects non-strings, inline markers, leading spaces, and other brackets
+test("inventedTurns detects invented transcript turns only at line start", () => {
+	for (const sample of [
+		"Text\n\n[tool result explain]\n{…}",
+		"[assistant]\nHi",
+		"x\n[tool call quiz] {}",
+		"x\n[user]\nhello",
+		"x\n[tool result quiz error]\nboom",
+	]) {
+		assert.equal(inventedTurns(sample), true, `expected true for ${JSON.stringify(sample)}`);
+	}
+	for (const sample of [
+		undefined,
+		null,
+		42,
+		"",
+		"plain prose",
+		"see [assistant] inline",
+		"  [assistant]",
+		"[Session note] x",
+		"[Image: read this file]",
+	]) {
+		assert.equal(inventedTurns(sample), false, `expected false for ${JSON.stringify(sample)}`);
+	}
+});
+
+// plan 005 part 1: Gemini 4 Hydrogen medium with invented turns falls back to Sonnet, keeps medium effort, sets message.model, and uses second run usage
+test("invented turns on Gemini 4 Hydrogen medium falls back to Sonnet", async () => {
+	const hydrogen = ANTIGRAVITY_MODELS.find((m) => m.id === "gemini-4-hydrogen")!;
+	let index = 0;
+	const responses = [
+		fakeRun(successWith({ text: "First try", toolCalls: [] }, "Prose\n[tool result explain]\n{}", 20)),
+		fakeRun(successWith({ text: "Second try", toolCalls: [] }, "Clean answer", 45)),
+	];
+	const run: RunAntigravity = (...args) => responses[index++]!.run(...args);
+	const stream = createAntigravityStream(run, () => "/fake/agy")(hydrogen, context, { reasoning: "medium" });
+	const events = [];
+	for await (const event of stream) events.push(event);
+	const result = await stream.result();
+	assert.equal(index, 2);
+	assert.equal(responses[1]!.calls[0]!.prompt, responses[0]!.calls[0]!.prompt);
+	assert.deepEqual(responses[1]!.calls[0]!.args, replaceModelArg(responses[0]!.calls[0]!.args, "claude-sonnet-5-5"));
+	assert.equal(responses[1]!.calls[0]!.args[responses[1]!.calls[0]!.args.indexOf("--effort") + 1], "medium");
+	assert.equal(result.stopReason, "stop");
+	assert.deepEqual(result.content, [{ type: "text", text: "Second try" }]);
+	assert.equal(result.model, "claude-sonnet-5-5");
+	assert.equal(result.provider, hydrogen.provider);
+	assert.equal(result.api, hydrogen.api);
+	assert.equal(result.usage.output, 45);
+	const contentEvents = events.filter((e) => e.type === "text_start" || e.type === "text_delta" || e.type === "text_end");
+	assert.ok(contentEvents.length > 0);
+	for (const event of contentEvents) {
+		assert.equal(event.partial.model, "claude-sonnet-5-5");
+	}
+});
+
+// plan 005 part 1: xhigh reasoning on Gemini 4 Hydrogen maps to high on the Sonnet fallback
+test("xhigh reasoning on Gemini 4 Hydrogen maps to high effort on Sonnet fallback", async () => {
+	const hydrogen = ANTIGRAVITY_MODELS.find((m) => m.id === "gemini-4-hydrogen")!;
+	let index = 0;
+	const responses = [fakeRun(success(undefined)), fakeRun(success({ text: "Second try", toolCalls: [] }))];
+	const run: RunAntigravity = (...args) => responses[index++]!.run(...args);
+	const result = await createAntigravityStream(run, () => "/fake/agy")(hydrogen, context, { reasoning: "xhigh" }).result();
+	assert.equal(index, 2);
+	assert.equal(result.stopReason, "stop");
+	const firstArgs = responses[0]!.calls[0]!.args;
+	const secondArgs = responses[1]!.calls[0]!.args;
+	assert.equal(firstArgs[firstArgs.indexOf("--effort") + 1], "xhigh");
+	assert.equal(secondArgs[secondArgs.indexOf("--model") + 1], "claude-sonnet-5-5");
+	assert.equal(secondArgs[secondArgs.indexOf("--effort") + 1], "high");
+});
+
+// plan 005 part 1: max reasoning also becomes high on the Sonnet fallback run
+test("max reasoning maps to high effort on the Sonnet fallback run", async () => {
+	const hydrogen = ANTIGRAVITY_MODELS.find((m) => m.id === "gemini-4-hydrogen")!;
+	let index = 0;
+	const responses = [fakeRun(success(undefined)), fakeRun(success({ text: "Second try", toolCalls: [] }))];
+	const run: RunAntigravity = (...args) => responses[index++]!.run(...args);
+	const result = await createAntigravityStream(run, () => "/fake/agy")(hydrogen, context, { reasoning: "max" }).result();
+	assert.equal(index, 2);
+	assert.equal(result.stopReason, "stop");
+	const secondArgs = responses[1]!.calls[0]!.args;
+	assert.equal(secondArgs[secondArgs.indexOf("--model") + 1], "claude-sonnet-5-5");
+	assert.equal(secondArgs[secondArgs.indexOf("--effort") + 1], "high");
+});
+
+// plan 005 part 1: unsupported reasoning level or omitted reasoning omits --effort on the fallback run
+test("unsupported or omitted reasoning omits --effort on the Sonnet fallback run", async () => {
+	const hydrogen = ANTIGRAVITY_MODELS.find((m) => m.id === "gemini-4-hydrogen")!;
+	for (const options of [{}, { reasoning: "minimal" as const }] as SimpleStreamOptions[]) {
+		let index = 0;
+		const responses = [fakeRun(success(undefined)), fakeRun(success({ text: "Second try", toolCalls: [] }))];
+		const run: RunAntigravity = (...args) => responses[index++]!.run(...args);
+		const result = await createAntigravityStream(run, () => "/fake/agy")(hydrogen, context, options).result();
+		assert.equal(index, 2);
+		assert.equal(result.stopReason, "stop");
+		assert.ok(!responses[0]!.calls[0]!.args.includes("--effort"));
+		assert.ok(!responses[1]!.calls[0]!.args.includes("--effort"));
+	}
+});
+
+// plan 005 part 1: model default has no --model on first run and adds --model claude-sonnet-5-5 on fallback
+test("model default adds --model claude-sonnet-5-5 on the fallback run", async () => {
+	let index = 0;
+	const responses = [
+		fakeRun(successWith({ text: "First", toolCalls: [] }, "[assistant]\nHi")),
+		fakeRun(success({ text: "Second", toolCalls: [] })),
+	];
+	const run: RunAntigravity = (...args) => responses[index++]!.run(...args);
+	const result = await createAntigravityStream(run, () => "/fake/agy")(model, context).result();
+	assert.equal(index, 2);
+	assert.equal(result.stopReason, "stop");
+	assert.ok(!responses[0]!.calls[0]!.args.includes("--model"));
+	assert.equal(responses[1]!.calls[0]!.args[responses[1]!.calls[0]!.args.indexOf("--model") + 1], "claude-sonnet-5-5");
+});
+
+// plan 005 part 1: selected model claude-sonnet-5-5 retries on Sonnet again after an unusable first run
+test("selected model claude-sonnet-5-5 retries on Sonnet again", async () => {
+	const sonnet = ANTIGRAVITY_MODELS.find((m) => m.id === "claude-sonnet-5-5")!;
+	let index = 0;
+	const responses = [
+		fakeRun(successWith({ text: "First", toolCalls: [] }, "x\n[user]\nhello")),
+		fakeRun(success({ text: "Second", toolCalls: [] })),
+	];
+	const run: RunAntigravity = (...args) => responses[index++]!.run(...args);
+	const result = await createAntigravityStream(run, () => "/fake/agy")(sonnet, context).result();
+	assert.equal(index, 2);
+	assert.equal(result.stopReason, "stop");
+	assert.equal(result.model, "claude-sonnet-5-5");
+	assert.equal(responses[1]!.calls[0]!.args[responses[1]!.calls[0]!.args.indexOf("--model") + 1], "claude-sonnet-5-5");
+});
+
+// plan 005 part 1: two runs both with invented turns end with ANTIGRAVITY_NO_ANSWER and clean up cwd
+test("two runs both with invented turns end with ANTIGRAVITY_NO_ANSWER", async () => {
+	const hydrogen = ANTIGRAVITY_MODELS.find((m) => m.id === "gemini-4-hydrogen")!;
+	let index = 0;
+	const responses = [
+		fakeRun(successWith({ text: "First", toolCalls: [] }, "[assistant]\nHi")),
+		fakeRun(successWith({ text: "Second", toolCalls: [] }, "x\n[tool call quiz] {}")),
+	];
+	const run: RunAntigravity = (...args) => responses[index++]!.run(...args);
+	const stream = createAntigravityStream(run, () => "/fake/agy")(hydrogen, context);
+	const result = await stream.result();
+	for await (const _event of stream) { /* drain */ }
+	assert.equal(index, 2);
+	assert.equal(result.stopReason, "error");
+	assert.equal(result.errorMessage, ANTIGRAVITY_NO_ANSWER);
+	assert.equal(existsSync(responses[0]!.calls[0]!.cwd), false);
+	assert.equal(existsSync(responses[1]!.calls[0]!.cwd), false);
+});
+
+// plan 005 part 1: second unusable run for either reason in any combination throws ANTIGRAVITY_NO_ANSWER
+test("mixed unusable runs end with ANTIGRAVITY_NO_ANSWER", async () => {
+	const hydrogen = ANTIGRAVITY_MODELS.find((m) => m.id === "gemini-4-hydrogen")!;
+	const pairs = [
+		[success(undefined), successWith({ text: "Second", toolCalls: [] }, "x\n[tool result quiz error]\nboom")],
+		[successWith({ text: "First", toolCalls: [] }, "x\n[user]\nhello"), success(undefined)],
+	] as const;
+	for (const [first, second] of pairs) {
+		let index = 0;
+		const responses = [fakeRun(first), fakeRun(second)];
+		const run: RunAntigravity = (...args) => responses[index++]!.run(...args);
+		const stream = createAntigravityStream(run, () => "/fake/agy")(hydrogen, context);
+		const result = await stream.result();
+		for await (const _event of stream) { /* drain */ }
+		assert.equal(index, 2);
+		assert.equal(result.stopReason, "error");
+		assert.equal(result.errorMessage, ANTIGRAVITY_NO_ANSWER);
+		assert.equal(existsSync(responses[0]!.calls[0]!.cwd), false);
+		assert.equal(existsSync(responses[1]!.calls[0]!.cwd), false);
+	}
+});
+
+// plan 005 part 1: clean run whose response is plain prose followed by envelope JSON runs once and keeps selected model
+test("clean run with plain prose and envelope JSON in response uses one run and keeps selected model", async () => {
+	const hydrogen = ANTIGRAVITY_MODELS.find((m) => m.id === "gemini-4-hydrogen")!;
+	const { run, calls } = fakeRun(successWith({ text: "Clean reply", toolCalls: [] }, 'Here is the answer.\n{"text":"Clean reply","toolCalls":[]}'));
+	const result = await createAntigravityStream(run, () => "/fake/agy")(hydrogen, context).result();
+	assert.equal(calls.length, 1);
+	assert.equal(result.stopReason, "stop");
+	assert.deepEqual(result.content, [{ type: "text", text: "Clean reply" }]);
+	assert.equal(result.model, "gemini-4-hydrogen");
 });
