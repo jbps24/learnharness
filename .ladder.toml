@@ -34,7 +34,7 @@ build = []
 format = []                  # the repo has no formatter; ESLint is a gate
 
 # Hang guard: any command without a limit of its own (the red and green checks, the gates, the formatter) is killed
-# after 5 min, about twice a full `npm test` (2 min since the tests run in a fresh data folder). Each test has 300 s
+# after 5 min, about twice a full `npm test` (2 min since the tests run in a fresh data folder). Each test has 120 s
 # (--test-timeout in scripts/run-tests.mjs, behind npm test and run_files): a test that awaits forever fails, named,
 # instead of stalling the run;
 # --test-force-exit ends a file whose failed test left a timer or socket open (it would keep the process alive).

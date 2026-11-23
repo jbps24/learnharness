@@ -37,7 +37,7 @@ const cleanUp = () => fs.rmSync(runDir, { recursive: true, force: true });
 
 const child = spawn(
 	process.execPath,
-	[tsx, "--test", "--test-timeout=300000", "--test-force-exit", ...files],
+	[tsx, "--test", "--test-timeout=120000", "--test-force-exit", ...files],
 	{ cwd: root, stdio: "inherit", env: { ...process.env, NODE_ENV: "test", LH_DATA_DIR: dataDir, TMPDIR: tmpDir, TMP: tmpDir, TEMP: tmpDir } },
 );
 
