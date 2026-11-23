@@ -30,7 +30,7 @@ const { createChatGPT, fileStore } = require("./chatgpt.cjs");
 const { attachChatGPTChild, trustedSender, chatGPTControl } = require("./chatgpt-ipc.cjs");
 const { createSubscriptions, loadSubscriptionSDK } = require("./subscriptions.cjs");
 const { attachSubscriptionChild, subscriptionControl } = require("./subscription-ipc.cjs");
-const { desktopAPIHeaders } = require("./desktop-api.cjs");
+const { desktopAPIHeaders, HEADER } = require("./desktop-api.cjs");
 const { openWebSubscriptionBrowser } = require("./web-subscription-browser.cjs");
 const { randomBytes } = require("node:crypto");
 const { spawn } = require("node:child_process");
@@ -770,6 +770,26 @@ async function main() {
 	ipcMain.handle("lh:attachment:pick", (event, mode) => pickAttachmentPath(event, mode, {
 		BrowserWindow, dialog, trustedAppWindows, origin: new URL(url).origin,
 	}));
+
+	// Plan 007 part 7: open a course file. The renderer names (chatId, path);
+	// main asks the server which files the chat lists and opens only a listed
+	// path. Anything else is refused silently.
+	ipcMain.handle("lh:open-course-file", async (event, chatId, filePath) => {
+		if (!trustedAppWindows.has(BrowserWindow.fromWebContents(event.sender)) || !trustedSender(event, new URL(url).origin, BrowserWindow)) return;
+		if (typeof chatId !== "string" || typeof filePath !== "string" || !chatId || !filePath) return;
+		try {
+			const res = await fetch(`${new URL(url).origin}/api/chats/${encodeURIComponent(chatId)}/course`, {
+					redirect: "manual",
+					headers: desktopAPISecret ? { [HEADER]: desktopAPISecret } : undefined,
+				});
+			if (!res.ok) return;
+			const body = await res.json();
+			if (!body?.material?.files?.some((file) => file.path === filePath)) return;
+			await shell.openPath(filePath);
+		} catch {
+			/* refuse silently */
+		}
+	});
 
 	installMenu();
 

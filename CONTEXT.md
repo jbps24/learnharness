@@ -58,6 +58,22 @@ _Avoid_: Closed block, stopping point, breakpoint
 Looking up a phrase in the open session, the whole of it whether shown yet or not: what the learner and teacher said, the cards (questions, answers, problems, solutions, plan) and side chats, as the learner reads them. It never finds what hasn't been revealed to the learner yet, nor the teacher's thinking.
 _Avoid_: Search, session search
 
+**Course file**:
+A local file the learner attached or named, or the tutor read, that joins the session automatically. While its binding tick is on, the course methods it supplies bind the tutor.
+_Avoid_: Source (that is the knowledge-graph import), attachment
+
+**Course method**:
+The route and notation a course file uses for one plan node. The tutor teaches, checks and grades by it, and gives another route only when the learner asks, labelled as not from their course.
+_Avoid_: Solution method, approach
+
+**Route conflict**:
+Two course files describing different routes for one plan node. The tutor asks the learner which route their course uses, and the answer is stored on the node.
+_Avoid_: Disagreement, clash
+
+**Course-method note**:
+The wire-only note that tells the tutor the course methods for a node (or the unresolved conflict). It is sent again when the node's methods change or a lesson-record cut drops it.
+_Avoid_: Method hint
+
 **Learner input**:
 Anything the learner contributes to a session: a typed message, an answer to a question or check, an explain-back, a practice submission, a plugin answer, or a steer.
 _Avoid_: User message (only one kind of input)

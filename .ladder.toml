@@ -34,11 +34,11 @@ build = []
 format = []                  # the repo has no formatter; ESLint is a gate
 
 # Hang guard: any command without a limit of its own (the red and green checks, the gates, the formatter) is killed
-# after 10 min; a full `npm test` takes about 7.5 min alone, set by tests/jobs.test.ts. Inside it, each test has 300 s
+# after 15 min; a full `npm test` takes 7.5-9 min alone (set by tests/jobs.test.ts) and more beside the mutants. Each test has 300 s
 # (--test-timeout in package.json and below): a test that awaits forever fails, named, instead of stalling the run;
 # --test-force-exit ends a file whose failed test left a timer or socket open (it would keep the process alive).
 [ladder]
-command_timeout = 600
+command_timeout = 900
 
 [suites]
 kind = "command"

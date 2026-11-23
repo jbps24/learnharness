@@ -1,4 +1,5 @@
-import { chainsForSelection, formatChainLine } from "@/src/core";
+import { chainsForSelection, formatChainLine, inheritCourseMaterial } from "@/src/core";
+import type { ChatRecord } from "@/src/core";
 import { newGraphContextMessage, type GraphContextPick } from "@/src/core";
 import { compactionInFlight, createChat, isTurnRunning, listChats, readSettingsRecord, runningUnit, stores, titleFromPrompt } from "@/src/server";
 import type { ChatListItem } from "@/src/core";
@@ -67,6 +68,20 @@ export async function POST(req: Request) {
 			formatChainLine(c, Object.fromEntries(byId)),
 		);
 		stores.chatStore.saveMessages(chat.id, [newGraphContextMessage(picks, chainLines)]);
+		// Plan 007 part 6: the practice session inherits the course methods of the lessons the picks came from.
+		if (kind === "practice") {
+			const lessons = new Map<string, ChatRecord>();
+			for (const node of pickedNodes) {
+				for (const point of node.provenance) {
+					const lesson = lessons.has(point.chatId) ? undefined : stores.chatStore.getChat(point.chatId);
+					if (lesson && lesson.kind !== "practice") lessons.set(lesson.id, lesson);
+				}
+			}
+			const inherited = inheritCourseMaterial(pickedNodes, lessons);
+			if (inherited.files.length > 0 || (inherited.propositionMethods?.length ?? 0) > 0) {
+				stores.chatStore.setCourseMaterial(chat.id, inherited);
+			}
+		}
 	}
 	return Response.json({ id: chat.id, title: chat.title });
 }

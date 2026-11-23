@@ -96,6 +96,8 @@ function createMemoryChatStore(initial: ChatRecord): ChatStore {
 		},
 		deleteChat: () => false,
 		updateSideChats: () => null,
+		getCourseMaterial: () => null,
+		setCourseMaterial: () => {},
 	};
 }
 

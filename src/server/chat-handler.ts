@@ -58,12 +58,17 @@ import { registerTurn, rememberTurnFailure, unregisterTurn } from "./turn-runs.t
 import { persistTurn, triggerExtraction, TurnPersistenceError } from "./turn-service.ts";
 import { hasProbeDone, hasUnresolvedQuestion, newUnitsNoteMessage, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
 import { breakNotesFor, breakTimings } from "../core/breaks.ts";
+import { courseNotesFor, practiceCourseNotesFor } from "../core/course-notes.ts";
 import { samePluginQuestionOccurrence } from "../core/plugin-questions.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
 import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight, antigravityRequestTrigger, antigravitySummaryFit, antigravityKeptTail, type CompactionDeps } from "./compaction.ts";
 import { COMPACTION_RESERVE_TOKENS } from "../core/compaction.ts";
 import { catalogContextLimits, refreshConnectionCatalog } from "./model-catalog.ts";
 import { emit } from "../core/events.ts";
+import { courseFilesUsed, mergeCourseFiles } from "../core/course-files.ts";
+import { assignmentTargets } from "../core/course-assign.ts";
+import { createCourseAssignWorker } from "../agent/subagents/course-assign.ts";
+import { createCourseAssignQueue } from "./course-assign-queue.ts";
 import { settledTurnResponse } from "./turn-runs.ts";
 import { asAgentMessages, type LhMessage } from "../core/native-messages.ts";
 import { QUESTION_TOOLS } from "../core/pending.ts";
@@ -78,7 +83,7 @@ import {
 	type TurnInput,
 } from "../core/input-events.ts";
 import { steerDelivered } from "../core/contracts.ts";
-import type {CallUsage} from "../core/contracts.ts";
+import type {CallUsage, PlanTree} from "../core/contracts.ts";
 
 /**
  * One chat turn over the server-owned native record. Framework-free (plain
@@ -103,6 +108,65 @@ import type {CallUsage} from "../core/contracts.ts";
  * already in progress when the opt-in is switched off. */
 function connectionBackgroundAllowed(provider: string): boolean {
 	return subscriptionBackgroundAllowed(provider) && (![CLAUDE_CODE_PROVIDER, ANTIGRAVITY_PROVIDER].includes(provider) || providerKeyPresent(provider));
+}
+
+const failedCourseScanStart = new Map<string, number>();
+
+/** Plan 007 part 2: keep the session's course files after a turn lands.
+ *  A record with no courseMaterial yet is scanned whole (backfill); later
+ *  turns scan only what this turn added. Never throws: a failure on any turn
+ *  (not only backfill) is logged and retried on the next turn from the
+ *  earliest unscanned message.
+ *  Returns the newly added paths for the assignment queue (part 3). */
+function collectCourseFiles(chatId: string, turnStart: number): string[] {
+	const retryStart = failedCourseScanStart.get(chatId);
+	const scanStart = retryStart !== undefined ? Math.min(retryStart, turnStart) : turnStart;
+	try {
+		const record = stores.chatStore.getChat(chatId);
+		if (!record) {
+			failedCourseScanStart.delete(chatId);
+			return [];
+		}
+		const existing = record.courseMaterial;
+		const scanned = existing ? record.messages.slice(scanStart) : record.messages;
+		const { material, added } = mergeCourseFiles(existing, courseFilesUsed(scanned), new Date().toISOString());
+		if (!existing || added.length > 0) stores.chatStore.setCourseMaterial(chatId, material);
+		failedCourseScanStart.delete(chatId);
+		if (added.length > 0) emit("course-material-changed", { chatId });
+		return added;
+	} catch (err) {
+		failedCourseScanStart.set(chatId, scanStart);
+		console.error(`[chat ${chatId}] course file collection failed:`, err);
+		return [];
+	}
+}
+
+const courseAssignQueue = createCourseAssignQueue({
+	chatStore: stores.chatStore,
+	jobStore: stores.jobStore,
+	worker: createCourseAssignWorker({ engineFor: () => resolveEngine("pdfReader") }),
+	emit,
+});
+
+/** Plan 007 part 3, trigger 1: assign the files a turn just added. */
+function assignAddedCourseFiles(chatId: string, added: readonly string[]): void {
+	if (added.length === 0) return;
+	const record = stores.chatStore.getChat(chatId);
+	if (!record?.courseMaterial) return;
+	const { targets } = assignmentTargets({ kind: "added", material: record.courseMaterial, added, tree: record.tree });
+	if (targets.length > 0) void courseAssignQueue.enqueue(chatId, targets);
+}
+
+/** Plan 007 part 3, trigger 2/3: a plan_init saved a new tree. */
+function assignAfterPlanInit(chatId: string, previousTree: PlanTree | undefined, nextTree: PlanTree): void {
+	const material = stores.chatStore.getChat(chatId)?.courseMaterial;
+	if (!material) return;
+	const result = assignmentTargets({ kind: "plan_init", material, previousTree, nextTree });
+	if (result.material.methods.length !== material.methods.length || result.material.conflicts.length !== material.conflicts.length) {
+		stores.chatStore.setCourseMaterial(chatId, result.material);
+		emit("course-material-changed", { chatId });
+	}
+	if (result.targets.length > 0) void courseAssignQueue.enqueue(chatId, result.targets);
 }
 
 function settlementErrorText(error: unknown): string {
@@ -620,11 +684,14 @@ export async function handleChatInput(
 		&& !record.messages.some((m) => m.role === "custom" && m.customType === "units-note")
 	) appends = [...appends, newUnitsNoteMessage()];
 	// Plan 002 part 4 (choice 8): break notes ride learner inputs of a teaching turn only.
-	if (
-		record.kind !== "practice"
-		&& (input.type === "text" || input.type === "answer" || input.type === "plugin-question-answer"
-			|| input.type === "plugin-problem-submission" || input.type === "thinking")
-	) {
+	const learnerInput = input.type === "text" || input.type === "answer" || input.type === "plugin-question-answer"
+		|| input.type === "plugin-problem-submission" || input.type === "thinking";
+	// Plan 007 part 6: practice turns take the inherited course methods on the same seam.
+	if (record.kind === "practice" && learnerInput) {
+		appends = [...appends, ...practiceCourseNotesFor([...record.messages, ...appends], record.courseMaterial)];
+	}
+	if (record.kind !== "practice" && learnerInput) {
+		if (record.tree) appends = [...appends, ...courseNotesFor([...record.messages, ...appends], record.tree, record.courseMaterial)];
 		appends = [...appends, ...breakNotesFor([...record.messages, ...appends], record.sideChats, breakTimings(effective.breaks), effective.breaks.enabled, Date.now())];
 	}
 	const afterInput = [...record.messages, ...appends];
@@ -820,6 +887,7 @@ export async function handleChatInput(
 						searchAvailable,
 						breaks: () => effectiveSettings().breaks,
 						now: Date.now,
+						onPlanSaved: (previous, next) => assignAfterPlanInit(chatId, previous, next),
 					},
 					agentOpts,
 				)
@@ -919,6 +987,7 @@ export async function handleChatInput(
 				const admittedMessages = turnMessages.filter((message) => !tentativeSideIds.has((message as LhMessage).id) || admittedSideIds.has((message as LhMessage).id));
 				const stamped = persistTurn(stores.chatStore, chatId, persistBaseCount, admittedMessages, isAborted);
 				noteSteersDurable(chatId, stores.chatStore.getChat(chatId)?.messages ?? stamped);
+					assignAddedCourseFiles(chatId, collectCourseFiles(chatId, record.messages.length));
 				// usage log append (idempotent per turn id) — the stats bar
 				// refolds this on the client after the turn settles. The
 				// provenance message is the turn's FIRST new assistant message.

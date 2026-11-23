@@ -1,0 +1,128 @@
+import {
+	applyAssignment,
+	type AssignmentTarget,
+	type AssignmentTargetNode,
+	type CourseAssignWorker,
+	type ExistingNodeMethod,
+} from "../core/course-assign.ts";
+import { registerJobAbort, unregisterJobAbort } from "../agent/subagents/aborts.ts";
+import type { CourseFileStatus, CourseMaterial } from "../core/contracts/course.ts";
+import type { ChatStore, JobStore } from "../core/ports.ts";
+
+export type { CourseAssignWorker, CourseAssignWorkerInput, CourseAssignWorkerResult } from "../core/course-assign.ts";
+
+export interface CourseAssignQueueDeps {
+	chatStore: Pick<ChatStore, "getChat" | "setCourseMaterial">;
+	jobStore: Pick<JobStore, "createJob" | "updateJob">;
+	worker: CourseAssignWorker;
+	emit?: (type: "course-material-changed", payload: { chatId: string }) => void;
+}
+
+export interface CourseAssignQueue {
+	enqueue(chatId: string, targets: readonly AssignmentTarget[]): Promise<void>;
+}
+
+const INTERRUPTED = "Assignment was interrupted.";
+
+/** One serial queue per chat (plan 007 part 3). `enqueue` resolves once its
+ *  own jobs have run; jobs from separate calls run one at a time, in order. */
+export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssignQueue {
+	const tails = new Map<string, Promise<void>>();
+	let jobSeq = 0;
+
+	function setStatus(chatId: string, path: string, status: CourseFileStatus, error?: string): void {
+		const material = deps.chatStore.getChat(chatId)?.courseMaterial;
+		if (!material) return;
+		const files = material.files.map((file) => {
+			if (file.path !== path) return file;
+			const { error: _error, ...rest } = file;
+			return { ...rest, status, ...(error !== undefined ? { error } : {}) };
+		});
+		deps.chatStore.setCourseMaterial(chatId, { ...material, files });
+		deps.emit?.("course-material-changed", { chatId });
+	}
+
+	function save(chatId: string, material: CourseMaterial): void {
+		deps.chatStore.setCourseMaterial(chatId, material);
+		deps.emit?.("course-material-changed", { chatId });
+	}
+
+	async function runOne(chatId: string, target: AssignmentTarget): Promise<void> {
+		const chat = deps.chatStore.getChat(chatId);
+		const material = chat?.courseMaterial;
+		const tree = chat?.tree;
+		const file = material?.files.find((f) => f.path === target.path);
+		if (!chat || !material || !tree || !file || file.status === "not-assignable") return;
+
+		const wanted = new Set(target.nodeIds);
+		const nodes = tree.nodes.filter((node) => wanted.has(node.id));
+		if (nodes.length === 0) return;
+		const targets: AssignmentTargetNode[] = nodes.map((node) => {
+			const unit = tree.units?.find((u) => u.nodeIds.includes(node.id));
+			return {
+				id: node.id,
+				title: node.title,
+				...(node.summary ? { summary: node.summary } : {}),
+				...(unit ? { unitTitle: unit.title, ...(unit.source ? { unitSource: unit.source } : {}) } : {}),
+			};
+		});
+		const binding = new Set(material.files.filter((f) => f.binding && f.path !== target.path).map((f) => f.path));
+		const existingMethods: Record<string, ExistingNodeMethod[]> = {};
+		for (const m of material.methods) {
+			if (!wanted.has(m.nodeId) || !binding.has(m.path)) continue;
+			(existingMethods[m.nodeId] ??= []).push({ path: m.path, method: m.method });
+		}
+
+		setStatus(chatId, target.path, "assigning");
+		const job = deps.jobStore.createJob({
+			// A core kind keeps the dock's rendering; nothing runs it through the job runner.
+			kind: "pdf",
+			chatId,
+			toolCallId: `course-assign:${++jobSeq}:${target.path}`,
+			activity: `assigning ${target.path}`,
+			input: { path: target.path, nodeIds: targets.map((t) => t.id) },
+		});
+
+		const controller = new AbortController();
+		registerJobAbort(job.id, controller);
+		try {
+			const outcome = await deps.worker({ chatId, path: target.path, targets, existingMethods, abortSignal: controller.signal });
+			if (controller.signal.aborted) throw new Error("aborted");
+			if (outcome.ok) {
+				const freshChat = deps.chatStore.getChat(chatId);
+				const current = freshChat?.courseMaterial;
+				if (!current) throw new Error("course material is gone");
+				const liveIds = new Set((freshChat.tree?.nodes ?? []).map((n) => n.id));
+				const filtered = { nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) };
+				save(chatId, applyAssignment(current, target.path, filtered, targets.map((t) => t.id)));
+				deps.jobStore.updateJob(job.id, { status: "done", activity: "assigned" });
+			} else {
+				setStatus(chatId, target.path, "failed", outcome.error);
+				deps.jobStore.updateJob(job.id, { status: "error", error: outcome.error, activity: "failed" });
+			}
+		} catch (err) {
+			console.error(`[chat ${chatId}] course assignment of ${target.path} failed:`, err);
+			setStatus(chatId, target.path, "failed", INTERRUPTED);
+			deps.jobStore.updateJob(job.id, { status: "error", error: INTERRUPTED, activity: "failed" });
+		} finally {
+			unregisterJobAbort(job.id);
+		}
+	}
+
+	return {
+		enqueue(chatId, targets) {
+			const previous = tails.get(chatId) ?? Promise.resolve();
+			const run = previous.then(async () => {
+				for (const target of targets) {
+					try {
+						await runOne(chatId, target);
+					} catch (err) {
+						console.error(`[chat ${chatId}] course assignment queue error:`, err);
+					}
+				}
+			});
+			tails.set(chatId, run);
+			return run;
+		},
+	};
+}

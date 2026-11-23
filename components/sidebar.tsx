@@ -24,6 +24,7 @@ import { useAppearance } from "@/components/settings/appearance";
 import { SourceDragRow } from "@/components/source-folder-tree";
 import { OverlayScrollArea } from "@/components/overlay-scroll";
 import { useServerEvent, useServerResync } from "@/components/server-events";
+import { SessionCourseFiles } from "@/components/session-course-files";
 import type { ChatListItem } from "@/src/core";
 import { kbdEventForAction } from "@/src/core";
 import { notifySettingsSaved } from "@/components/settings-signal";
@@ -98,6 +99,7 @@ declare global {
 			onOpenSettings?: (cb: (section: string) => void) => () => void;
 			takeStartupMessage?: () => Promise<StartupMessageOffer | null>;
 			dismissStartupMessage?: (id: string) => Promise<boolean>;
+			openCourseFile?: (chatId: string, path: string) => Promise<void>;
 		};
 	}
 }
@@ -780,6 +782,7 @@ function SessionsSidebar() {
 							onContextMenu={(e) => openContext(e, c)}
 						/>
 					)}
+					<SessionCourseFiles chatId={c.id} active={pathname === `/chat/${c.id}`} />
 				</SourceDragRow>
 			);
 		}

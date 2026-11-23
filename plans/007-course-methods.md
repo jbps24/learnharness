@@ -406,6 +406,7 @@ All UI texts in this part, the activity-dock label (choice 11) and the error "As
 - An unticked file's row and nodes are dimmed.
 - The component fetches on mount and refetches on `course-material-changed` for this chat and on server resync (`useServerEvent` / `useServerResync`).
 - **Click:** with `window.lh?.openCourseFile`, it opens the file. Without it, it copies the path and shows the existing copy hint.
+- **Owner rulings after the run (2026-11-23):** there is no existing copy hint, so the inline line "Path copied" / "Could not copy the path", shown for 2 s, stays. The dropdown stays visible under a session row while that row is being renamed (`RenameRow`).
 
 **Tests.**
 - The dropdown renders statuses and node titles from a fixture.
@@ -441,11 +442,11 @@ Launch the desktop app with `ELECTRON_RUN_AS_NODE` unset and open the Regelungss
 
 | Part | Status |
 |---|---|
-| 1 Course files | not started |
-| 2 Persistence, backfill, API | not started |
-| 3 Assignment worker | not started |
-| 4 Notes and course_route | not started |
-| 5 Prompt edits | not started |
-| 6 Practice inheritance | not started |
-| 7 Sidebar dropdown | not started |
-| 8 Docs, build, install | not started |
+| 1 Course files | green, build-review/20261122-200055-007-part-1 |
+| 2 Persistence, backfill, API | green, build-review/20261122-203646-007-part-2 |
+| 3 Assignment worker | green, build-review/20261123-093026-007-part-3 |
+| 4 Notes and course_route | green, build-review/20261123-131700-007-part-4 |
+| 5 Prompt edits | green, build-review/20261123-142309-007-part-5 |
+| 6 Practice inheritance | green, build-review/20261123-151633-007-part-6 |
+| 7 Sidebar dropdown | green, build-review/20261123-172836-007-part-7; rename ruling green, build-review/20261123-193132-007-part-7 |
+| 8 Docs, build, install | green, build-review/20261123-191040-007-part-8; desktop:dist built and installed 2026-11-23 |

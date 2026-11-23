@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { PATHS } from "../../config.ts";
 import { emit } from "../core/events.ts";
 import type { ChatStore } from "../core/ports.ts";
-import type { ChatRecord, ChatSettings, ChatSummary, ExtractionRunUsage, ImageSnapshot, PlanTree, SideChatThread, TurnUsage } from "../core/contracts.ts";
+import type { ChatRecord, ChatSettings, ChatSummary, CourseMaterial, ExtractionRunUsage, ImageSnapshot, PlanTree, SideChatThread, TurnUsage } from "../core/contracts.ts";
 import { CURRENT_CHAT_VERSION } from "../core/contracts.ts";
 import type { LhMessage } from "../core/native-messages.ts";
 import { activeProblemOf, danglingQuestionOf } from "../core/native-messages.ts";
@@ -243,6 +243,19 @@ function updateSideChats(id: string, update: (threads: SideChatThread[]) => Side
 	return next;
 }
 
+function getCourseMaterial(chatId: string): CourseMaterial | null {
+	return getChat(chatId)?.courseMaterial ?? null;
+}
+
+/** Like saveTree: course bookkeeping is not conversation activity, so
+ *  updatedAt stays put. */
+function setCourseMaterial(chatId: string, material: CourseMaterial): void {
+	const record = getChat(chatId);
+	if (!record) throw new Error(`Chat not found: ${chatId}`);
+	record.courseMaterial = material;
+	writeChat(record);
+}
+
 export const chatStore: ChatStore = {
 	createChat,
 	getChat,
@@ -256,4 +269,6 @@ export const chatStore: ChatStore = {
 	appendTurnUsage,
 	appendExtractionUsage,
 	updateSideChats,
+	getCourseMaterial,
+	setCourseMaterial,
 };

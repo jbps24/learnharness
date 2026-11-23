@@ -115,3 +115,5 @@ export type * from "./plugin-tree.ts";
 export * from "./plugin-agents.ts";
 export * from "./drawn-history.ts";
 export * from "./find-text.ts";
+export * from "./course-files.ts";
+export * from "./course-practice.ts";
