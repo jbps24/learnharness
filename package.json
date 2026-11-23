@@ -16,7 +16,7 @@
 		"dev": "npm run plugins:build-core && npm run plugins:build-authoring && next dev -H localhost",
 		"build": "npm run plugins:build-core && npm run plugins:build-authoring && next build",
 		"start": "next start -H localhost",
-		"test": "NODE_ENV=test tsx --test --test-timeout=300000 --test-force-exit tests/*.test.ts tests/*.test.tsx",
+		"test": "node scripts/run-tests.mjs",
 		"lint": "eslint .",
 		"typecheck": "tsc --noEmit",
 		"plugins:setup": "node scripts/setup-plugins.mjs",

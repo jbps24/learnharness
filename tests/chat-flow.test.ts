@@ -266,6 +266,16 @@ function createConfiguredChat(title: string) {
 
 const createdChats: string[] = [];
 after(() => {
+	// Hermetic: no job of this file's chats may be left "running" — a later
+	// stale-job sweep (tests/jobs.test.ts) would take it for an orphan and
+	// re-run or re-deliver it. Each run used to leave one behind here.
+	const running = createdChats.flatMap((id) => jobStore.listJobs(id)).filter((job) => job.status === "running");
+	for (const id of createdChats) jobStore.deleteJobsForChat(id);
+	assert.deepEqual(
+		running.map((job) => job.toolCallId),
+		[],
+		"jobs this file left running",
+	);
 	for (const id of createdChats) {
 		try {
 			fs.unlinkSync(path.join(PATHS.chats, `${id}.json`));
@@ -461,6 +471,10 @@ describe("teacher chat flow (scripted model)", () => {
 		const at = record.messages.findIndex((m) => (m as { id?: string }).id === steer.id);
 		assert.ok(at !== -1, "the marker is in the record");
 		assert.equal((record.messages[at + 1] as { role?: string } | undefined)?.role, "assistant", "the wake response follows the marker");
+		// Hermetic teardown: the record was only the pump's chat index; no
+		// runner ever settles it, so a later stale-job sweep would take it for
+		// an orphan.
+		jobStore.updateJob(job.id, { status: "done", activity: "settled (test)" });
 	});
 
 	it("Wave C steering: a mid-run result injects BETWEEN turn units — never splitting a toolCall from its toolResult", { timeout: 15000 }, async () => {
