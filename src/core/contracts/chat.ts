@@ -50,10 +50,18 @@ export interface ChatRecord {
 	sideChats?: SideChatThread[];
 	/** Course files, extracted node methods and unresolved route conflicts. */
 	courseMaterial?: CourseMaterial;
+	/** Replies replaced by Retry, kept for diagnosis, never shown and never sent to a model. */
+	retiredReplies?: RetiredReply[];
 	/** Schema version. Absence denotes version 1; writes stamp the current
 	 * supported version. Reads refuse records stamped newer than this build
 	 * so a downgraded app cannot rewrite an unsupported record. */
 	version?: number;
+}
+
+/** Replies replaced by Retry, kept for diagnosis, never shown and never sent to a model. */
+export interface RetiredReply {
+	at: string;
+	messages: LhMessage[];
 }
 
 /** The chat record format this build writes and understands. */

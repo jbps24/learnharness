@@ -32,6 +32,7 @@ function makeChatStore(initial: ChatRecord): ChatStore {
 		},
 		getChat: (id: string) => chats.get(id) ?? null,
 		listChats: () => [],
+		retireReply: () => { throw new Error("retireReply is not used here"); },
 		saveMessages: (id: string, messages: readonly LhMessage[]) => {
 			const c = chats.get(id);
 			if (c) c.messages = [...messages];

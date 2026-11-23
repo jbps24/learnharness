@@ -139,6 +139,19 @@ function saveMessages(id: string, messages: LhMessage[]): void {
 	writeChat(record);
 }
 
+function retireReply(id: string, ids: readonly string[], at: string): void {
+	const record = getChat(id);
+	if (!record) throw new Error(`Chat not found: ${id}`);
+	const wanted = new Set(ids);
+	const known = new Set(record.messages.map((m) => m.id));
+	for (const wid of wanted) if (!known.has(wid)) throw new Error(`Message not found: ${wid}`);
+	const removed = record.messages.filter((m) => wanted.has(m.id));
+	record.messages = record.messages.filter((m) => !wanted.has(m.id));
+	record.retiredReplies = [...(record.retiredReplies ?? []), { at, messages: removed }];
+	record.updatedAt = new Date().toISOString();
+	writeChat(record);
+}
+
 /** A synchronous read/merge/write keeps concurrent worker and turn writes from losing snapshots. */
 function saveImageSnapshot(id: string, snapshotId: string, image: ImageSnapshot): void {
 	if (!/^[a-f0-9]{64}$/.test(snapshotId) || createHash("sha256").update(Buffer.from(image.data, "base64")).digest("hex") !== snapshotId) {
@@ -261,6 +274,7 @@ export const chatStore: ChatStore = {
 	getChat,
 	listChats,
 	saveMessages,
+	retireReply,
 	saveImageSnapshot,
 	saveTree,
 	saveSettings,

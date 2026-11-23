@@ -64,6 +64,7 @@ function createMemoryChatStore(): ChatStore {
 				settings: r.settings,
 			}));
 		},
+		retireReply(): void { throw new Error("retireReply is not used here"); },
 		saveMessages(id: string, messages: LhMessage[]): void {
 			const record = records.get(id);
 			if (!record) throw new Error(`Chat not found: ${id}`);

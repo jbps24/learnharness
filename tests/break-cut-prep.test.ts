@@ -75,6 +75,7 @@ function createMemoryChatStore(initial: ChatRecord): ChatStore {
 		},
 		getChat: (id) => chats.get(id) ?? null,
 		listChats: () => [],
+		retireReply: () => { throw new Error("retireReply is not used here"); },
 		saveMessages: (id, messages) => {
 			const c = chats.get(id);
 			if (c) c.messages = [...messages];

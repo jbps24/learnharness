@@ -54,7 +54,7 @@ Settlement persists new native messages, plan snapshots, and usage, including pa
 
 Disconnecting a browser detaches a view, not the agent. Explicit abort is separate. [`session-core.ts`](../components/session-core.ts) owns reattachment, bounded 409 recovery, and adoption of canonical state. One recovery attachment is allowed after premature EOF/read failure; repeated transport failure shows an error.
 
-Question drafts survive optimistic unmount in memory. Uncertain submissions reconcile the saved record and running state before resending, scoped to the same question occurrence. Provider-response retry is explicit: it preserves failed attempts on disk while omitting the eligible failed tail from temporary model context. It is not mount-time replay or automatic retry of arbitrary failures.
+Question drafts survive optimistic unmount in memory. Uncertain submissions reconcile the saved record and running state before resending, scoped to the same question occurrence. Provider-response retry is explicit: it preserves failed attempts on disk while omitting the eligible failed tail from temporary model context. The latest effect-free teacher reply to a learner input can also be retried: it moves to `retiredReplies` (kept, never shown or sent to a model) and the turn runs again from that input on the chat's current model. It is not mount-time replay or automatic retry of arbitrary failures.
 
 ### Drawn history
 

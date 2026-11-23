@@ -35,6 +35,7 @@ function makeHarness(courseMaterial: CourseMaterial | undefined) {
 		getChat: (id) => (id === chatId ? { ...record, ...(storedMaterial ? { courseMaterial: storedMaterial } : {}) } : null),
 		listChats: () => [],
 		saveMessages: () => {},
+		retireReply: () => { throw new Error("retireReply is not used here"); },
 		saveImageSnapshot: () => {},
 		saveTree: () => {},
 		appendTurnUsage: () => {},

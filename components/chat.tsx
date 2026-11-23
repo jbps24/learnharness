@@ -76,7 +76,7 @@ import { PlanBlock, PlanPopup, latestTree } from "@/components/plan-block";
 import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext, type SessionImage } from "@/components/session-overlay";
 import { AbortTurnDialog, type AbortMode } from "@/components/abort-turn-dialog";
-import { ArrowRightIcon, DumbbellIcon, MessageCircleQuestionIcon, WaypointsIcon } from "lucide-react";
+import { ArrowRightIcon, DumbbellIcon, MessageCircleQuestionIcon, RotateCcwIcon, WaypointsIcon } from "lucide-react";
 import type { PlanBlockData } from "@/src/core";
 import { QuestionDock } from "@/components/question-dock";
 import { PluginQuestionDock } from "./plugin-question-dock";
@@ -130,6 +130,7 @@ import {
 	malformedQuestionsOf,
 	dismissedAnswer,
 	endsInFailedTurn,
+	retryableReply,
 	findPendingToolCall,
 	phaseAt3,
 	phaseTimeline,
@@ -238,6 +239,15 @@ export function retryFailedResponse(
 ): void {
 	submittedDraft.current = null;
 	void send({ type: "retry" });
+}
+
+/** Retry the latest effect-free teacher reply (plan 006 part 3). */
+export function retryLatestReply(
+	send: (input: ChatInput) => void,
+	submittedDraft: { current: string | null },
+): void {
+	submittedDraft.current = null;
+	void send({ type: "retry-reply" });
 }
 
 /** useLayoutEffect that is silent during SSR (client components still render on the server in Next). */
@@ -1196,6 +1206,8 @@ export function Chat({
 	// recovers from it. Later compaction requires new input instead.
 	const retryable = !pluginOwnsDock && (status === "ready" || status === "error") && !busy && !compacting && endsInFailedTurn(nativeMessages);
 	const retryFailedTurn = () => retryFailedResponse(send, draftRef);
+	const replyRetryable = !pluginOwnsDock && (status === "ready" || status === "error") && !busy && !compacting && !turnInFlight && !error && kind !== "practice" && retryableReply(nativeMessages) !== null;
+	const retryReply = () => retryLatestReply(send, draftRef);
 
 	// Learning breaks (plan 002 part 6): Take/Skip are silent appends through
 	// the break route; Continue is a chat input that composes the teacher turn.
@@ -2205,6 +2217,12 @@ export function Chat({
 						    the summarizer holds the model gate. Mutually exclusive with
 						    the THINKING placeholder by construction (the gate sits
 						    BEFORE beginTurn; the settle kick runs after endTurn). */}
+							{replyRetryable && (
+								<Button variant="ghost" size="xs" className="self-start" data-testid="retry-reply" onClick={retryReply}>
+									<RotateCcwIcon aria-hidden />
+									Retry
+								</Button>
+							)}
 							{compacting && (
 								<span className="flex items-center gap-2 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground">
 									<BrailleSpinner label={compactingUnit !== undefined ? `Summarizing unit ${compactingUnit}` : "Compacting context"} />

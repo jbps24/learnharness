@@ -23,6 +23,10 @@ _Avoid_: Course record, compaction summary, ChatRecord
 A model-written summary that stands in for the older stretch of the current unit when its context grows too large. It never rewrites the lesson record.
 _Avoid_: Lesson record
 
+**Retry a reply**:
+The learner asks for the latest teacher reply to be written again. Only a reply to a learner input that did nothing lasting (text, read-only lookups, questions for the learner) can be retried. The old reply is kept on disk but hidden from the chat and from every model, and the turn runs again from the same input on the chat's current model.
+_Avoid_: Regenerate, redo
+
 **Node status**:
 Where the teacher has been on the plan, not what the learner has mastered: upcoming, current (the teacher's most recent teaching call was about this node), or visited (the teacher has taught it and moved on).
 _Avoid_: Done, mastered, completed

@@ -80,10 +80,13 @@ import {
 	parseChatInput,
 	questionRecoveryAppends,
 	retryDrops,
+	retryableReply,
 	type TurnInput,
 } from "../core/input-events.ts";
 import { steerDelivered } from "../core/contracts.ts";
 import type {CallUsage, PlanTree} from "../core/contracts.ts";
+
+const NO_REPLY_TO_RETRY = "There is no reply to retry.";
 
 /**
  * One chat turn over the server-owned native record. Framework-free (plain
@@ -363,6 +366,10 @@ export async function handleChatInput(
 		}
 	}
 
+	if (input.type === "retry-reply" && (record.kind === "practice" || !retryableReply(record.messages))) {
+		return Response.json({ error: NO_REPLY_TO_RETRY }, { status: 400 });
+	}
+
 	if (input.type === "retry-question") {
 		try { questionRecoveryAppends(record.messages, input); }
 		catch (err) {
@@ -473,7 +480,7 @@ export async function handleChatInput(
 		const saved = conversation.provider === CLAUDE_CODE_PROVIDER ? stores.chatStore.getChat(chatId)?.messages ?? [] : [];
 		const savedIds = new Set(saved.map((message) => message.id));
 		const reportHistory = saved.length ? [...saved, ...live.filter((message) => !savedIds.has(message.id))] : live;
-		const window = sideContextWindow(reportHistory, conversationEngine.model, contextWindow, input.type === "retry");
+		const window = sideContextWindow(reportHistory, conversationEngine.model, contextWindow, input.type === "retry" || input.type === "retry-reply");
 		const budget = window === undefined ? thresholdTokens : Math.max(1, window - Math.min(COMPACTION_RESERVE_TOKENS, conversationEngine.model.maxTokens));
 		return projectedContextTokens(live, systemPromptTokens, estimateModel) <= budget;
 	};
@@ -516,7 +523,9 @@ export async function handleChatInput(
 					const updates = sideConversationEntries({ messages: current.messages, sideChats: sideContext.snapshot(chatId) }, after);
 					if (!updates.length) return current.messages;
 					const projected = [...current.messages, ...(input.type === "answer" || input.type === "retry-question" ? [...next, ...updates] : [...updates, ...next])];
-					const omitted = input.type === "retry" ? retryDrops(current.messages) : new Set<string>();
+					const omitted = input.type === "retry" ? retryDrops(current.messages)
+						: input.type === "retry-reply" ? new Set(retryableReply(current.messages) ?? [])
+						: new Set<string>();
 					return projected.filter((message) => !omitted.has(message.id));
 				} catch (error) {
 					if (error instanceof ChatInputError) return current.messages; // normal input validation follows the gate
@@ -573,6 +582,11 @@ export async function handleChatInput(
 			if (err instanceof ChatInputError) return Response.json({ error: err.message }, { status: 400 });
 			throw err;
 		}
+	}
+	if (input.type === "retry-reply") {
+		const ids = record.kind === "practice" ? null : retryableReply(record.messages);
+		if (!ids) return Response.json({ error: NO_REPLY_TO_RETRY }, { status: 400 });
+		retryOmissions = new Set(ids);
 	}
 
 	// The input's native appends (pure; the honest 400 for an answer with no
@@ -710,7 +724,10 @@ export async function handleChatInput(
 	// Only the learner/automatic input is write-ahead. Raw exchanges are
 	// already durable in sideChats; their delivery entries join the SDK
 	// request at its preparation boundary, and publish only if admitted.
-	const merged = [...record.messages, ...appends];
+	// Retry-reply moves the old reply out of the record (plan 006 part 2).
+	const merged = input.type === "retry-reply"
+		? record.messages.filter((m) => !retryOmissions.has(m.id))
+		: [...record.messages, ...appends];
 	// Retry preserves every persisted attempt. Pi needs a non-assistant
 	// tail to start continue(), so its temporary history omits the trailing
 	// failures only. Count that SAME temporary prefix at settlement, or the
@@ -719,7 +736,10 @@ export async function handleChatInput(
 	const stagedAutomatic = isSubscriptionProvider(conversation.provider) && input.type === "steers";
 	let persistBaseCount = stagedAutomatic ? record.messages.length : agentMessages.length;
 	try {
-		if (!stagedAutomatic) {
+		if (input.type === "retry-reply") {
+			stores.chatStore.retireReply(chatId, [...retryOmissions], new Date().toISOString());
+			inputSaved = true;
+		} else if (!stagedAutomatic) {
 			stores.chatStore.saveMessages(chatId, merged);
 			inputSaved = true;
 		}

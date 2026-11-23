@@ -30,6 +30,7 @@ function makeMemoryChatStore(): ChatStore {
 		},
 		getChat: (id) => chats.get(id) ?? null,
 		listChats: (): ChatSummary[] => [],
+		retireReply: () => { throw new Error("retireReply is not used here"); },
 		saveMessages: (id, messages) => {
 			const rec = chats.get(id);
 			if (rec) rec.messages = messages;

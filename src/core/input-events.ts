@@ -81,7 +81,9 @@ export type ChatInput =
 	 *  only with nothing active (mid-problem input rides the dock). */
 	| { type: "next" }
 	/** Resume after a taken break (plan 002 part 4). */
-	| { type: "break-continue"; toolCallId: string };
+	| { type: "break-continue"; toolCallId: string }
+	/** Retry the latest effect-free teacher reply (plan 006 part 1). */
+	| { type: "retry-reply" };
 
 /** A wake-pipeline steer delivery — same turn composition, server-origin.
  *  Wave C (2026-09-26): the idle wake carries EVERY queued marker as its
@@ -268,6 +270,8 @@ export function parseChatInput(input: unknown): ChatInput {
 			return { type: "continue" };
 		case "retry":
 			return { type: "retry" };
+		case "retry-reply":
+			return { type: "retry-reply" };
 		case "retry-question":
 			if (typeof i.messageId !== "string" || !i.messageId || typeof i.toolCallId !== "string" || !i.toolCallId ||
 				typeof i.contentIndex !== "number" || !Number.isSafeInteger(i.contentIndex) || i.contentIndex < 0) {
@@ -369,6 +373,10 @@ export function inputAppends(
 				_now,
 			)];
 		}
+		case "retry-reply":
+			// The server replaces the reply itself (a later plan 006 part);
+			// it appends nothing here.
+			return [];
 	}
 }
 
@@ -485,4 +493,39 @@ function dismissalConclusion(record: { messages: LhMessage[] }): LhMessage[] {
 /** Is this tool name a question tool (dock-owned, answer-gated)? */
 export function isQuestionTool(name: string): boolean {
 	return (QUESTION_TOOLS as readonly string[]).includes(name);
+}
+
+/** Tools whose use leaves nothing lasting: a reply that only used these (and
+ *  questions for the learner) can be retried. */
+export const REPLY_RETRY_READ_ONLY_TOOLS = ["find", "find_candidates", "grep", "list_propositions", "list_sessions", "ls", "pdf", "pdf_extract", "pdf_info", "pdf_search", "read", "show_image", "web_fetch", "web_fetch_pdf", "web_search"] as const;
+
+const REPLY_RETRY_SKIPPED_NOTES = ["break-note", "graph-context", "units-note", "course-files", "course-method"];
+
+/** Ids of the latest teacher reply when it can be retried (plan 006 part 1),
+ *  in record order; null when it cannot. */
+export function retryableReply(messages: readonly LhMessage[]): string[] | null {
+	const readOnly = REPLY_RETRY_READ_ONLY_TOOLS as readonly string[];
+	const collected: LhMessage[] = [];
+	let input: LhMessage | undefined;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i]!;
+		if (m.role === "custom" && (isSideQuestionMarker(m) || REPLY_RETRY_SKIPPED_NOTES.includes(m.customType))) continue;
+		if (m.role === "assistant" || (m.role === "toolResult" && !isQuestionTool(m.toolName))) {
+			collected.unshift(m);
+			continue;
+		}
+		input = m;
+		break;
+	}
+	if (!input || !collected.some((m) => m.role === "assistant")) return null;
+	if (!(input.role === "user" || (input.role === "toolResult" && isQuestionTool(input.toolName)))) return null;
+	for (const m of collected) {
+		if (m.role === "assistant") {
+			if (m.stopReason !== "stop" && m.stopReason !== "toolUse") return null;
+			for (const block of m.content) {
+				if (block.type === "toolCall" && !readOnly.includes(block.name) && !isQuestionTool(block.name)) return null;
+			}
+		} else if (m.role === "toolResult" && !readOnly.includes(m.toolName)) return null;
+	}
+	return collected.map((m) => m.id);
 }

@@ -97,6 +97,6 @@ Amended 2026-11-22: plan 007 runs before this plan, and its two course notes are
 
 | Part | Status | Build id |
 |---|---|---|
-| 1 Core: retryable reply and input type | not started | - |
-| 2 Store and server | not started | - |
-| 3 UI button | not started | - |
+| 1 Core: retryable reply and input type | green, build-review/20261123-214225-006-part-1 | - |
+| 2 Store and server | green, build-review/20261123-220453-006-part-2 | - |
+| 3 UI button | green, build-review/20261123-222810-006-part-3 | - |
