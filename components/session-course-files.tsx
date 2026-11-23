@@ -1,25 +1,17 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, InfoIcon } from "lucide-react";
 import { useServerEvent, useServerResync } from "./server-events.tsx";
+import { CONFLICT_TIP, CourseFileDetailsDialog, STATUS_LABEL } from "./course-file-details-dialog.tsx";
 import { filePathLabel } from "@/src/core";
-import type { CourseFile, CourseFileStatus, CourseMaterial } from "@/src/core";
+import type { CourseFile, CourseMaterial } from "@/src/core";
 
 interface CourseResponse {
 	material: CourseMaterial | null;
 	nodes: Array<{ id: string; title: string }>;
+	lessonNodes?: Array<{ lessonId: string; id: string; title: string }>;
 }
-
-const STATUS_LABEL: Record<CourseFileStatus, string> = {
-	pending: "waiting",
-	assigning: "reading…",
-	assigned: "assigned",
-	failed: "failed",
-	"not-assignable": "not assignable",
-};
-
-const CONFLICT_TIP = "Your tutor will ask which route your course uses.";
 
 const openKey = (chatId: string) => `lh:course-files-open:${chatId}`;
 
@@ -39,13 +31,14 @@ function writeOpen(chatId: string, open: boolean) {
 	}
 }
 
-/** The open session's course files (plan 007 part 7): tick, status, the plan
- *  nodes each file supplied a method for, and unresolved-conflict marks. */
+/** The open session's course files (plan 007 part 7): tick, status,
+ *  unresolved-conflict marks, and a details dialog per file (plan 009). */
 export function SessionCourseFiles({ chatId, active }: { chatId: string; active: boolean }) {
 	const [data, setData] = useState<CourseResponse | null>(null);
 	const [open, setOpen] = useState(() => readOpen(chatId));
 	const [overrides, setOverrides] = useState<Record<string, boolean>>({});
 	const [hint, setHint] = useState<string | null>(null);
+	const [detailsPath, setDetailsPath] = useState<string | null>(null);
 
 	const refresh = useCallback(async () => {
 		try {
@@ -54,6 +47,7 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 			const next = (await res.json()) as CourseResponse;
 			setOverrides({});
 			setData(next);
+			setDetailsPath((current) => (current && !next.material?.files.some((f) => f.path === current) ? null : current));
 		} catch {
 			/* keep the last list */
 		}
@@ -78,8 +72,6 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 	if (!active || !data?.material || data.material.files.length === 0) return null;
 	const { files, methods, conflicts } = data.material;
 	const ordered = [...files].sort((a, b) => a.addedAt.localeCompare(b.addedAt));
-	const nodeOrder = new Map(data.nodes.map((node, index) => [node.id, index]));
-	const titleOf = new Map(data.nodes.map((node) => [node.id, node.title]));
 
 	const toggleOpen = () => {
 		const next = !open;
@@ -131,11 +123,8 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 				<ul className="mt-1 space-y-1">
 					{ordered.map((file) => {
 						const binding = overrides[file.path] ?? file.binding;
-						const supplied = file.status === "assigned"
-							? methods
-								.filter((m) => m.path === file.path && titleOf.has(m.nodeId))
-								.sort((a, b) => (nodeOrder.get(a.nodeId) ?? 0) - (nodeOrder.get(b.nodeId) ?? 0))
-							: [];
+						const conflicted = conflicts.some((c) => c.chosen === undefined && c.paths.includes(file.path)
+							&& methods.some((m) => m.path === file.path && m.nodeId === c.nodeId));
 						return (
 							<li key={file.path} className={binding ? undefined : "opacity-50"}>
 								<div className="flex items-center gap-1.5">
@@ -150,26 +139,23 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 										{STATUS_LABEL[file.status]}
 									</span>
 									{file.via === "inherited" && <span className="shrink-0 text-muted-foreground">from lesson</span>}
+									{conflicted && <span title={CONFLICT_TIP} className="shrink-0">⚠</span>}
+									<button type="button" data-testid="course-file-details"
+										aria-label={`Details for ${filePathLabel(file.path)}`}
+										onClick={() => setDetailsPath(file.path)}
+										className="shrink-0 text-muted-foreground hover:text-foreground">
+										<InfoIcon className="size-3" aria-hidden="true" />
+									</button>
 								</div>
-								{supplied.length > 0 && (
-									<ul className="ml-5 text-muted-foreground">
-										{supplied.map((m) => {
-											const conflicted = conflicts.some((c) => c.nodeId === m.nodeId && c.chosen === undefined && c.paths.includes(file.path));
-											return (
-												<li key={m.nodeId} className="truncate">
-													{titleOf.get(m.nodeId)}
-													{conflicted && <span title={CONFLICT_TIP}> ⚠</span>}
-												</li>
-											);
-										})}
-									</ul>
-								)}
 							</li>
 						);
 					})}
 				</ul>
 			)}
 			{hint && <div className="mt-1 text-muted-foreground">{hint}</div>}
+			<CourseFileDetailsDialog file={files.find((f) => f.path === detailsPath) ?? null}
+				material={data.material} nodes={data.nodes} lessonNodes={data.lessonNodes ?? []}
+				onClose={() => setDetailsPath(null)} />
 		</div>
 	);
 }

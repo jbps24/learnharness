@@ -81,5 +81,5 @@ Plan 007 Part 7 lists, under each course file in the sidebar, every plan node th
 
 | Part | Status |
 |---|---|
-| 1 Route: practice node titles | not started |
-| 2 Rows and details dialog | not started |
+| 1 Route: practice node titles | green, build-review/20261123-225449-009-part-1 |
+| 2 Rows and details dialog | green, build-review/20261123-230852-009-part-2 |

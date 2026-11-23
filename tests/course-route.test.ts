@@ -44,7 +44,7 @@ describe("course route", () => {
 		const chat = chatStore.createChat("empty course");
 		const res = await courseRoute.GET(new Request(`http://localhost/api/chats/${chat.id}/course`), routeCtx(chat.id));
 		assert.equal(res.status, 200);
-		assert.deepEqual(await res.json(), { material: null, nodes: [] });
+		assert.deepEqual(await res.json(), { material: null, nodes: [], lessonNodes: [] });
 	});
 
 	// plan 007 part 2: GET returns { material, nodes } with node titles taken from record.tree
@@ -81,6 +81,7 @@ describe("course route", () => {
 				{ id: "n1", title: "Eigenvalues" },
 				{ id: "n2", title: "Diagonalization" },
 			],
+			lessonNodes: [],
 		});
 	});
 
