@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { PATHS, ROOT } from "../config.ts";
@@ -13,6 +14,13 @@ describe("test isolation", () => {
 		assert.ok(dir, "LH_DATA_DIR is set (run the tests through npm test or scripts/run-tests.mjs)");
 		const relative = path.relative(ROOT, path.resolve(dir));
 		assert.ok(relative.startsWith("..") || path.isAbsolute(relative), `LH_DATA_DIR is outside the repo: ${dir}`);
+	});
+
+	it("puts the temp folder in the same run folder, so the run's temp files go with it", () => {
+		const runDir = path.dirname(path.resolve(process.env.LH_DATA_DIR ?? ""));
+		const tmp = path.resolve(os.tmpdir());
+		assert.ok(path.basename(runDir).startsWith("lh-test-run-"), `LH_DATA_DIR sits in a run folder: ${runDir}`);
+		assert.ok(!path.relative(runDir, tmp).startsWith(".."), `os.tmpdir() (${tmp}) is inside ${runDir}`);
 	});
 
 	it("resolves the data paths into that folder", () => {

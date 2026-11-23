@@ -4,11 +4,12 @@
 //   node scripts/run-tests.mjs [test files...]
 //
 // Runs `tsx --test` over the given files (all of tests/*.test.ts and
-// tests/*.test.tsx when none are given) with LH_DATA_DIR pointing at a fresh
-// temporary folder, which is removed afterwards. Without it the tests wrote
-// their chats and jobs into the repo's data/, where leftovers piled up run
-// after run and slowed every stale-job sweep (tests/test-isolation.test.ts).
-// The exit code is the test run's.
+// tests/*.test.tsx when none are given) in a fresh run folder, removed
+// afterwards: LH_DATA_DIR is <run>/data and the temp folder (TMPDIR, and TMP /
+// TEMP for Windows) is <run>/tmp. Without it the tests wrote their chats and
+// jobs into the repo's data/, where leftovers piled up run after run and
+// slowed every stale-job sweep, and left thousands of temp folders behind
+// (tests/test-isolation.test.ts). The exit code is the test run's.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -27,13 +28,17 @@ if (files.length === 0) {
 		.map((name) => path.join("tests", name));
 }
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-test-data-"));
-const cleanUp = () => fs.rmSync(dataDir, { recursive: true, force: true });
+const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-test-run-"));
+const dataDir = path.join(runDir, "data");
+const tmpDir = path.join(runDir, "tmp");
+fs.mkdirSync(dataDir);
+fs.mkdirSync(tmpDir);
+const cleanUp = () => fs.rmSync(runDir, { recursive: true, force: true });
 
 const child = spawn(
 	process.execPath,
 	[tsx, "--test", "--test-timeout=300000", "--test-force-exit", ...files],
-	{ cwd: root, stdio: "inherit", env: { ...process.env, NODE_ENV: "test", LH_DATA_DIR: dataDir } },
+	{ cwd: root, stdio: "inherit", env: { ...process.env, NODE_ENV: "test", LH_DATA_DIR: dataDir, TMPDIR: tmpDir, TMP: tmpDir, TEMP: tmpDir } },
 );
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
