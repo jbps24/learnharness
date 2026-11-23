@@ -33,15 +33,22 @@ whole_sections = []
 build = []
 format = []                  # the repo has no formatter; ESLint is a gate
 
+# Hang guard: any command without a limit of its own (the red and green checks, the gates, the formatter) is killed
+# after 10 min; a full `npm test` takes about 7.5 min alone, set by tests/jobs.test.ts. Inside it, each test has 300 s
+# (--test-timeout in package.json and below): a test that awaits forever fails, named, instead of stalling the run;
+# --test-force-exit ends a file whose failed test left a timer or socket open (it would keep the process alive).
+[ladder]
+command_timeout = 600
+
 [suites]
 kind = "command"
 run = ["npm", "test", "--silent"]
 # a mutant runs the test files named after its source file, then those that import it directly, then those that
 # import it through other files, then the rest: each stage only if the ones before leave it alive (run_files wins
 # over run_filtered). test_files: what `run` runs.
-run_files = ["env", "NODE_ENV=test", "npx", "tsx", "--test", "{files}"]
+run_files = ["env", "NODE_ENV=test", "npx", "tsx", "--test", "--test-timeout=300000", "--test-force-exit", "{files}"]
 test_files = ["tests/*.test.ts", "tests/*.test.tsx"]
-run_filtered = ["sh", "-c", "NODE_ENV=test npx tsx --test $(ls tests/*{filter}*.test.ts tests/*{filter}*.test.tsx 2>/dev/null)"]
+run_filtered = ["sh", "-c", "NODE_ENV=test npx tsx --test --test-timeout=300000 --test-force-exit $(ls tests/*{filter}*.test.ts tests/*{filter}*.test.tsx 2>/dev/null)"]
 timeout = 900
 suffix = ".test"
 file_ext = ".ts"
