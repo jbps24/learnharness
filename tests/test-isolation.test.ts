@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import v8 from "node:v8";
 import { PATHS, ROOT } from "../config.ts";
 
 // The test runner (scripts/run-tests.mjs) gives every run a fresh data folder:
@@ -21,6 +22,11 @@ describe("test isolation", () => {
 		const tmp = path.resolve(os.tmpdir());
 		assert.ok(path.basename(runDir).startsWith("lh-test-run-"), `LH_DATA_DIR sits in a run folder: ${runDir}`);
 		assert.ok(!path.relative(runDir, tmp).startsWith(".."), `os.tmpdir() (${tmp}) is inside ${runDir}`);
+	});
+
+	it("caps each test process's heap at 2 GB, so a runaway allocation crashes in seconds", () => {
+		const limit = v8.getHeapStatistics().heap_size_limit;
+		assert.ok(limit <= 2.2 * 1024 ** 3, `heap limit ${(limit / 1024 ** 3).toFixed(2)} GB`);
 	});
 
 	it("resolves the data paths into that folder", () => {

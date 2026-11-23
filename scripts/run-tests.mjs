@@ -10,6 +10,11 @@
 // jobs into the repo's data/, where leftovers piled up run after run and
 // slowed every stale-job sweep, and left thousands of temp folders behind
 // (tests/test-isolation.test.ts). The exit code is the test run's.
+//
+// Memory: each test file's process may use at most 2 GB of heap, and at most
+// half the cores run test files at once. A mutant that turns a loop into an
+// endless allocation then crashes in seconds (counted as caught) instead of
+// filling the machine's memory until the ladder's time limit (2026-11-23).
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,6 +33,10 @@ if (files.length === 0) {
 		.map((name) => path.join("tests", name));
 }
 
+const concurrency = Math.max(2, Math.floor(os.availableParallelism() / 2));
+const heapCap = "--max-old-space-size=2048";
+const nodeOptions = [process.env.NODE_OPTIONS, heapCap].filter(Boolean).join(" ");
+
 const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-test-run-"));
 const dataDir = path.join(runDir, "data");
 const tmpDir = path.join(runDir, "tmp");
@@ -37,8 +46,8 @@ const cleanUp = () => fs.rmSync(runDir, { recursive: true, force: true });
 
 const child = spawn(
 	process.execPath,
-	[tsx, "--test", "--test-timeout=120000", "--test-force-exit", ...files],
-	{ cwd: root, stdio: "inherit", env: { ...process.env, NODE_ENV: "test", LH_DATA_DIR: dataDir, TMPDIR: tmpDir, TMP: tmpDir, TEMP: tmpDir } },
+	[tsx, "--test", `--test-concurrency=${concurrency}`, "--test-timeout=120000", "--test-force-exit", ...files],
+	{ cwd: root, stdio: "inherit", env: { ...process.env, NODE_ENV: "test", LH_DATA_DIR: dataDir, TMPDIR: tmpDir, TMP: tmpDir, TEMP: tmpDir, NODE_OPTIONS: nodeOptions } },
 );
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
