@@ -7,6 +7,7 @@
 - [CourseFile](#coursefile) — supporting declaration
 - [CourseFileStatus](#coursefilestatus) — supporting declaration
 - [CourseMaterial](#coursematerial) — supporting declaration
+- [ExamPattern](#exampattern) — supporting declaration
 - [NodeConflict](#nodeconflict) — supporting declaration
 - [NodeMethod](#nodemethod) — supporting declaration
 - [PropositionMethod](#propositionmethod) — supporting declaration
@@ -23,6 +24,8 @@ export interface CourseFile {
     binding: boolean;
     status: CourseFileStatus;
     error?: string;
+    category?: "material" | "exam";
+    categoryBy?: "reader" | "learner";
 }
 ```
 
@@ -36,6 +39,8 @@ export interface CourseFile {
 - [binding](#coursefile-binding)
 - [status](#coursefile-status)
 - [error](#coursefile-error)
+- [category](#coursefile-category)
+- [categoryBy](#coursefile-categoryby)
 
 ### CourseFile path
 
@@ -73,6 +78,18 @@ status: CourseFileStatus;
 error?: string;
 ```
 
+### CourseFile category
+
+```ts
+category?: "material" | "exam";
+```
+
+### CourseFile categoryBy
+
+```ts
+categoryBy?: "reader" | "learner";
+```
+
 ## CourseFileStatus
 
 Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
@@ -91,10 +108,15 @@ export interface CourseMaterial {
     methods: NodeMethod[];
     conflicts: NodeConflict[];
     propositionMethods?: PropositionMethod[];
+    examPatterns?: ExamPattern[];
+    propositionExamPatterns?: Array<ExamPattern & {
+        propositionId: string;
+        lessonId: string;
+    }>;
 }
 ```
 
-**Related types:** [CourseFile](contracts-course.md#coursefile), [NodeConflict](contracts-course.md#nodeconflict), [NodeMethod](contracts-course.md#nodemethod), [PropositionMethod](contracts-course.md#propositionmethod).
+**Related types:** [CourseFile](contracts-course.md#coursefile), [ExamPattern](contracts-course.md#exampattern), [NodeConflict](contracts-course.md#nodeconflict), [NodeMethod](contracts-course.md#nodemethod), [PropositionMethod](contracts-course.md#propositionmethod).
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
@@ -102,6 +124,8 @@ export interface CourseMaterial {
 - [methods](#coursematerial-methods)
 - [conflicts](#coursematerial-conflicts)
 - [propositionMethods](#coursematerial-propositionmethods)
+- [examPatterns](#coursematerial-exampatterns)
+- [propositionExamPatterns](#coursematerial-propositionexampatterns)
 
 ### CourseMaterial files
 
@@ -127,6 +151,81 @@ Practice sessions only: the snapshot taken at creation (Part 6).
 
 ```ts
 propositionMethods?: PropositionMethod[];
+```
+
+### CourseMaterial examPatterns
+
+```ts
+examPatterns?: ExamPattern[];
+```
+
+### CourseMaterial propositionExamPatterns
+
+```ts
+propositionExamPatterns?: Array<ExamPattern & {
+    propositionId: string;
+    lessonId: string;
+}>;
+```
+
+## ExamPattern
+
+Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
+
+```ts
+export interface ExamPattern {
+    nodeId: string;
+    path: string;
+    source: string;
+    pages?: string;
+    pattern: string;
+    grading?: string;
+}
+```
+
+**Member index** (including nested object members; inherited members are defined in the linked base types):
+
+- [nodeId](#exampattern-nodeid)
+- [path](#exampattern-path)
+- [source](#exampattern-source)
+- [pages](#exampattern-pages)
+- [pattern](#exampattern-pattern)
+- [grading](#exampattern-grading)
+
+### ExamPattern nodeId
+
+```ts
+nodeId: string;
+```
+
+### ExamPattern path
+
+```ts
+path: string;
+```
+
+### ExamPattern source
+
+```ts
+source: string;
+```
+
+### ExamPattern pages
+
+```ts
+pages?: string;
+```
+
+### ExamPattern pattern
+
+```ts
+pattern: string;
+```
+
+### ExamPattern grading
+
+```ts
+grading?: string;
 ```
 
 ## NodeConflict

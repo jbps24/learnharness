@@ -108,8 +108,8 @@ The course files of plan 007 (Skript, Mitschrift) decide **how** the tutor teach
 
 | Part | Status |
 |---|---|
-| 1 Contracts, store, API | not started |
-| 2 Reader sorts and reads exams | not started |
-| 3 Practice inheritance, note, prompts | not started |
-| 4 Panel groups, move, picker badge | not started |
-| 5 Docs, build, install | not started |
+| 1 Contracts, store, API | green, build-review/20261123-232934-010-part-1 |
+| 2 Reader sorts and reads exams | green, build-review/20261123-235318-010-part-2; mismatch log fix build-review/20261124-010039-010-part-2 |
+| 3 Practice inheritance, note, prompts | green, build-review/20261124-001101-010-part-3 |
+| 4 Panel groups, move, picker badge | green, build-review/20261124-003239-010-part-4 |
+| 5 Docs, build, install | green, build-review/20261124-010259-010-part-5; build and install after plan 011 |

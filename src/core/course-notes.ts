@@ -1,9 +1,10 @@
 import { projectionHeads } from "./compaction.ts";
-import type { CourseMaterial, NodeMethod } from "./contracts/course.ts";
+import { fileCategory, type CourseMaterial, type NodeMethod } from "./contracts/course.ts";
 import { derivePlanStatusesLh, type PlanTree } from "./contracts/plan.ts";
 import {
 	newCourseFilesNoteMessage,
 	newCourseMethodNoteMessage,
+	newExamPatternNoteMessage,
 	type LhMarkerMessage,
 	type LhMessage,
 } from "./native-messages.ts";
@@ -59,7 +60,7 @@ export function courseNotesFor(
 	material: CourseMaterial | undefined,
 ): LhMarkerMessage[] {
 	if (!material) return [];
-	const binding = new Set(material.files.filter((f) => f.binding).map((f) => f.path));
+	const binding = new Set(material.files.filter((f) => f.binding && fileCategory(f) === "material").map((f) => f.path));
 	const paths = [...binding].sort();
 	if (paths.length === 0) return [];
 
@@ -105,7 +106,7 @@ export function practiceCourseNotesFor(
 	if (!material) return [];
 	const paths = material.files.filter((f) => f.binding).map((f) => f.path).sort();
 	const propositionMethods = material.propositionMethods ?? [];
-	if (paths.length === 0 && propositionMethods.length === 0) return [];
+	if (paths.length === 0 && propositionMethods.length === 0 && (material.propositionExamPatterns ?? []).length === 0) return [];
 
 	const live = messages.slice(projectionHeads(messages).start);
 	const notes: LhMarkerMessage[] = [];
@@ -134,6 +135,24 @@ export function practiceCourseNotesFor(
 				&& (m.details as { digest?: string } | null)?.digest === digest,
 		);
 		if (!isLive) notes.push(newCourseMethodNoteMessage("practice", text, digest));
+	}
+
+	const propositionExamPatterns = material.propositionExamPatterns ?? [];
+	if (propositionExamPatterns.length > 0) {
+		const text = [
+			"[Exam pattern] The learner's past exams ask about these propositions as follows. Pose problems on them in this shape (task type, givens, answer format, notation, level), with new numbers and functions, and name the model in the statement, e.g. \"in the style of WS22 A3b\". Where grading is given, model solutions and verdicts follow it.",
+			...propositionExamPatterns.map(
+				(p) =>
+					`- [${p.propositionId}] ${p.source} (${p.pages ? `${fileName(p.path)}, ${p.pages}` : fileName(p.path)}): ${p.pattern}${p.grading ? ` Grading: ${p.grading}` : ""}`,
+			),
+		].join("\n");
+		const digest = digestOf(text);
+		const isLive = live.some(
+			(m) =>
+				m.role === "custom" && m.customType === "exam-pattern"
+				&& (m.details as { digest?: string } | null)?.digest === digest,
+		);
+		if (!isLive) notes.push(newExamPatternNoteMessage(text, digest));
 	}
 	return notes;
 }

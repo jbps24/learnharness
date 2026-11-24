@@ -152,7 +152,7 @@ const courseAssignQueue = createCourseAssignQueue({
 });
 
 /** Plan 007 part 3, trigger 1: assign the files a turn just added. */
-function assignAddedCourseFiles(chatId: string, added: readonly string[]): void {
+export function assignAddedCourseFiles(chatId: string, added: readonly string[]): void {
 	if (added.length === 0) return;
 	const record = stores.chatStore.getChat(chatId);
 	if (!record?.courseMaterial) return;

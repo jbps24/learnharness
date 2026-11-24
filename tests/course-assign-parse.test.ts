@@ -42,6 +42,7 @@ describe("parseAssignment", () => {
 	// plan 007 part 3: valid result for two of three target nodes succeeds and omits uncovered node
 	it("parses a valid result covering two of three target nodes", () => {
 		const raw = JSON.stringify({
+			category: "material",
 			nodes: [
 				{ nodeId: "n1", pages: "S. 20–27", method: "Step 1, then step 2.", sameRouteAsExisting: null },
 				{ nodeId: "n3", pages: "S. 30", method: "Use table 4.", sameRouteAsExisting: true },
@@ -51,6 +52,7 @@ describe("parseAssignment", () => {
 		assert.deepEqual(parsed, {
 			ok: true,
 			value: {
+				category: "material",
 				nodes: [
 					{ nodeId: "n1", pages: "S. 20–27", method: "Step 1, then step 2.", sameRouteAsExisting: null },
 					{ nodeId: "n3", pages: "S. 30", method: "Use table 4.", sameRouteAsExisting: true },
@@ -61,8 +63,8 @@ describe("parseAssignment", () => {
 
 	// plan 007 part 3: empty nodes array is valid when file covers none of the target nodes
 	it("accepts an empty nodes array when no target nodes are covered", () => {
-		const parsed = parseAssignment(JSON.stringify({ nodes: [] }), TARGETS);
-		assert.deepEqual(parsed, { ok: true, value: { nodes: [] } });
+		const parsed = parseAssignment(JSON.stringify({ category: "material", nodes: [] }), TARGETS);
+		assert.deepEqual(parsed, { ok: true, value: { category: "material", nodes: [] } });
 	});
 
 	// plan 007 part 3: non-JSON or non-object top-level output returns a problem
@@ -79,6 +81,7 @@ describe("parseAssignment", () => {
 	// plan 007 part 3: unknown node id is collected as a problem
 	it("rejects an unknown node id", () => {
 		const raw = JSON.stringify({
+			category: "material",
 			nodes: [{ nodeId: "unknown-id", pages: "p. 1", method: "Some method.", sameRouteAsExisting: null }],
 		});
 		const parsed = parseAssignment(raw, TARGETS);
@@ -89,6 +92,7 @@ describe("parseAssignment", () => {
 	// plan 007 part 3: duplicate node id is collected as a problem
 	it("rejects duplicate node ids", () => {
 		const raw = JSON.stringify({
+			category: "material",
 			nodes: [
 				{ nodeId: "n1", pages: "p. 1", method: "First.", sameRouteAsExisting: null },
 				{ nodeId: "n1", pages: "p. 2", method: "Second.", sameRouteAsExisting: null },
@@ -102,6 +106,7 @@ describe("parseAssignment", () => {
 	// plan 007 part 3: empty or whitespace-only method is collected as a problem
 	it("rejects an empty or whitespace-only method", () => {
 		const raw = JSON.stringify({
+			category: "material",
 			nodes: [{ nodeId: "n1", pages: "p. 1", method: "   ", sameRouteAsExisting: null }],
 		});
 		const parsed = parseAssignment(raw, TARGETS);
@@ -113,14 +118,14 @@ describe("parseAssignment", () => {
 	it("accepts a method at COURSE_METHOD_CAP and rejects one over the cap", () => {
 		const atCap = "x".repeat(COURSE_METHOD_CAP);
 		const ok = parseAssignment(
-			JSON.stringify({ nodes: [{ nodeId: "n1", pages: "p. 1", method: atCap, sameRouteAsExisting: null }] }),
+			JSON.stringify({ category: "material", nodes: [{ nodeId: "n1", pages: "p. 1", method: atCap, sameRouteAsExisting: null }] }),
 			TARGETS,
 		);
 		assert.equal(ok.ok, true);
 
 		const overCap = "x".repeat(COURSE_METHOD_CAP + 1);
 		const bad = parseAssignment(
-			JSON.stringify({ nodes: [{ nodeId: "n1", pages: "p. 1", method: overCap, sameRouteAsExisting: null }] }),
+			JSON.stringify({ category: "material", nodes: [{ nodeId: "n1", pages: "p. 1", method: overCap, sameRouteAsExisting: null }] }),
 			TARGETS,
 		);
 		assert.equal(bad.ok, false);
@@ -131,6 +136,7 @@ describe("parseAssignment", () => {
 	it("rejects sameRouteAsExisting that is not boolean or null", () => {
 		for (const invalid of ["true", 1, {}, undefined]) {
 			const raw = JSON.stringify({
+				category: "material",
 				nodes: [{ nodeId: "n1", pages: "p. 1", method: "Valid.", ...(invalid !== undefined ? { sameRouteAsExisting: invalid } : {}) }],
 			});
 			const parsed = parseAssignment(raw, TARGETS);
@@ -142,6 +148,7 @@ describe("parseAssignment", () => {
 	// plan 007 part 3: multiple problems across entries are all collected
 	it("collects all problems across entries", () => {
 		const raw = JSON.stringify({
+			category: "material",
 			nodes: [
 				{ nodeId: "bogus", pages: "p. 1", method: "", sameRouteAsExisting: "yes" },
 				{ nodeId: "n2", pages: "p. 2", method: "x".repeat(COURSE_METHOD_CAP + 1), sameRouteAsExisting: false },
@@ -167,6 +174,7 @@ describe("applyAssignment", () => {
 	// plan 007 part 3: valid result for two of three targets stores two methods and sets file status to assigned
 	it("stores methods for covered nodes and sets file status to assigned", () => {
 		const next = applyAssignment(baseMaterial(), "/course/a.pdf", {
+			category: "material",
 			nodes: [
 				{ nodeId: "n1", pages: "S. 20–27", method: "Method 1", sameRouteAsExisting: null },
 				{ nodeId: "n2", pages: "S. 28", method: "Method 2", sameRouteAsExisting: null },
@@ -197,7 +205,7 @@ describe("applyAssignment", () => {
 		const next = applyAssignment(
 			initial,
 			"/course/a.pdf",
-			{ nodes: [{ nodeId: "n1", pages: "p. 10", method: "New A on n1", sameRouteAsExisting: true }] },
+			{ category: "material", nodes: [{ nodeId: "n1", pages: "p. 10", method: "New A on n1", sameRouteAsExisting: true }] },
 			["n1"],
 		);
 		assert.deepEqual(next.methods, [
@@ -218,6 +226,7 @@ describe("applyAssignment", () => {
 			conflicts: [],
 		};
 		const next = applyAssignment(initial, "/course/b.pdf", {
+			category: "material",
 			nodes: [{ nodeId: "n1", pages: "p. 3", method: "Route B", sameRouteAsExisting: false }],
 		});
 		assert.deepEqual(next.conflicts, [
@@ -240,6 +249,7 @@ describe("applyAssignment", () => {
 			conflicts: [{ nodeId: "n1", paths: ["/course/a.pdf", "/course/b.pdf"] }],
 		};
 		const next = applyAssignment(initial, "/course/c.pdf", {
+			category: "material",
 			nodes: [{ nodeId: "n1", pages: "p. 4", method: "Route C", sameRouteAsExisting: false }],
 		});
 		assert.deepEqual(next.conflicts, [
@@ -261,7 +271,7 @@ describe("applyAssignment", () => {
 		const next = applyAssignment(
 			initial,
 			"/course/a.pdf",
-			{ nodes: [{ nodeId: "n1", pages: "p. 9", method: "New n1", sameRouteAsExisting: null }] },
+			{ category: "material", nodes: [{ nodeId: "n1", pages: "p. 9", method: "New n1", sameRouteAsExisting: null }] },
 			["n1", "n2"],
 		);
 		assert.deepEqual(
@@ -286,6 +296,7 @@ describe("applyAssignment", () => {
 				conflicts: [{ nodeId: "n1", paths: ["/course/a.pdf", "/course/b.pdf"] }],
 			};
 			const next = applyAssignment(initial, "/course/c.pdf", {
+				category: "material",
 				nodes: [{ nodeId: "n1", pages: "p. 2", method: "Same route", sameRouteAsExisting: same }],
 			});
 			assert.deepEqual(next.conflicts, [{ nodeId: "n1", paths: ["/course/a.pdf", "/course/b.pdf"] }]);
@@ -308,7 +319,7 @@ describe("applyAssignment", () => {
 			methods: [],
 			conflicts: [],
 		};
-		const next = applyAssignment(initial, "/course/a.pdf", { nodes: [] });
+		const next = applyAssignment(initial, "/course/a.pdf", { category: "material", nodes: [] });
 		assert.equal(next.files[0]?.status, "assigned");
 		assert.equal(next.files[0]?.error, undefined);
 	});

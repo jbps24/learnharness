@@ -613,4 +613,81 @@ describe("SessionCourseFiles", () => {
 		assert.equal((rows[0]!.getAttribute("class") ?? "").split(/\s+/).includes("opacity-50"), false, "Ticked row is not dimmed");
 		assert.equal((rows[1]!.getAttribute("class") ?? "").split(/\s+/).includes("opacity-50"), true, "Unticked row is dimmed with opacity-50");
 	});
+
+	// plan 010 part 4: Under "Files (n)", two sub-headings Course material and Exams list their files in addedAt order
+	it("groups files under Course material and Exams sub-headings in addedAt order", async () => {
+		const data: CourseResponse = {
+			material: {
+				files: [
+					{ path: "/course/exam-2.pdf", addedAt: "2026-11-22T10:04:00.000Z", via: "learner", binding: true, status: "assigned", category: "exam" },
+					{ path: "/course/notes-2.pdf", addedAt: "2026-11-22T10:03:00.000Z", via: "learner", binding: true, status: "assigned", category: "material" },
+					{ path: "/course/exam-1.pdf", addedAt: "2026-11-22T10:02:00.000Z", via: "learner", binding: true, status: "assigned", category: "exam" },
+					{ path: "/course/notes-1.pdf", addedAt: "2026-11-22T10:01:00.000Z", via: "learner", binding: true, status: "assigned" },
+				],
+				methods: [],
+				conflicts: [],
+			},
+			nodes: [],
+		};
+
+		const h = await mountHarness({
+			fetchImpl: async () => jsonResponse(data),
+		});
+		await act(async () => {
+			findButtonByText(h.doc, "Files (4)").click();
+		});
+
+		const text = h.container.textContent ?? "";
+		const materialIdx = text.indexOf("Course material");
+		const examsIdx = text.indexOf("Exams");
+		assert.ok(materialIdx >= 0, "Expected Course material sub-heading");
+		assert.ok(examsIdx > materialIdx, "Expected Exams sub-heading after Course material");
+
+		const n1Idx = text.indexOf("notes-1.pdf");
+		const n2Idx = text.indexOf("notes-2.pdf");
+		const e1Idx = text.indexOf("exam-1.pdf");
+		const e2Idx = text.indexOf("exam-2.pdf");
+		assert.ok(materialIdx < n1Idx && n1Idx < n2Idx && n2Idx < examsIdx, "Course material files appear under Course material in addedAt order");
+		assert.ok(examsIdx < e1Idx && e1Idx < e2Idx, "Exam files appear under Exams in addedAt order");
+	});
+
+	// plan 010 part 4: A group with no files is not shown
+	it("hides Course material or Exams sub-heading when that group has no files", async () => {
+		let payload: CourseResponse = {
+			material: {
+				files: [
+					{ path: "/course/only-material.pdf", addedAt: "2026-11-22T10:00:00.000Z", via: "learner", binding: true, status: "assigned" },
+				],
+				methods: [],
+				conflicts: [],
+			},
+			nodes: [],
+		};
+
+		const h = await mountHarness({
+			fetchImpl: async () => jsonResponse(payload),
+		});
+		await act(async () => {
+			findButtonByText(h.doc, "Files (1)").click();
+		});
+
+		assert.equal(h.container.textContent?.includes("Course material"), true);
+		assert.equal(h.container.textContent?.includes("Exams"), false, "Empty Exams group is hidden");
+
+		payload = {
+			material: {
+				files: [
+					{ path: "/course/only-exam.pdf", addedAt: "2026-11-22T10:01:00.000Z", via: "learner", binding: true, status: "assigned", category: "exam" },
+				],
+				methods: [],
+				conflicts: [],
+			},
+			nodes: [],
+		};
+		h.emitEvent("course-material-changed", { chatId: "chat-1" });
+		await flush();
+
+		assert.equal(h.container.textContent?.includes("Course material"), false, "Empty Course material group is hidden");
+		assert.equal(h.container.textContent?.includes("Exams"), true);
+	});
 });

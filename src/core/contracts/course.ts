@@ -7,6 +7,8 @@ export interface CourseFile {
 	binding: boolean;        // the learner's tick; true when added
 	status: CourseFileStatus;
 	error?: string;          // only when status is "failed"
+	category?: "material" | "exam";
+	categoryBy?: "reader" | "learner";
 }
 
 export interface NodeMethod {
@@ -31,13 +33,29 @@ export interface PropositionMethod {
 	method: string;
 }
 
+export interface ExamPattern {
+	nodeId: string;
+	path: string;
+	source: string;
+	pages?: string;
+	pattern: string;
+	grading?: string;
+}
+
 export interface CourseMaterial {
 	files: CourseFile[];
 	methods: NodeMethod[];
 	conflicts: NodeConflict[];
 	/** Practice sessions only: the snapshot taken at creation (Part 6). */
 	propositionMethods?: PropositionMethod[];
+	examPatterns?: ExamPattern[];
+	propositionExamPatterns?: Array<ExamPattern & { propositionId: string; lessonId: string }>;
 }
 
 export const COURSE_METHOD_CAP = 1_500;
+export const EXAM_PATTERN_CAP = 1_200;
 export const ASSIGNABLE_EXTENSIONS = [".pdf", ".md", ".markdown", ".txt", ".tex"] as const;
+
+export function fileCategory(file: CourseFile): "material" | "exam" {
+	return file.category ?? "material";
+}

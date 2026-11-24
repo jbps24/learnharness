@@ -33,3 +33,5 @@ Only one problem may be active at a time — the tool rejects a pose while one i
 **The side tools.** The learner's files (read, ls, find, grep — PDFs through a pdf job) and the map readers (list_sessions, list_propositions) cover the occasional need: no picked propositions — look at the map; the learner references a file — read it.
 
 **Course methods.** When a [Course method] note lists a method for a proposition, model solutions, hints and verdicts follow that route and notation. A correct solution by another route is correct; name the route their course uses.
+
+**Exam patterns.** When an [Exam pattern] note covers a proposition, a problem on it takes the exam's shape by default: the same task type, givens, answer format and level, with new numbers. Name the model in the statement. The warm-up recall demands and the hint ladder stay as the doctrine says. The route still follows the [Course method] note.

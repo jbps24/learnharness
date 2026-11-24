@@ -354,7 +354,7 @@ describe("inheritCourseMaterial", () => {
 	// plan 007 part 6: binding files are added as via "inherited" with status copied; non-teaching/missing lessons ignored; empty picks empty
 	it("copies file status as via inherited, ignores non-teaching or missing lessons, and handles empty picks", () => {
 		const empty = inheritCourseMaterial([], new Map());
-		assert.deepEqual(empty, { files: [], methods: [], conflicts: [], propositionMethods: [] });
+		assert.deepEqual(empty, { files: [], methods: [], conflicts: [], propositionMethods: [], propositionExamPatterns: [] });
 
 		const tree = makeTree(["n1"]);
 		const tag = teachCall("n1");

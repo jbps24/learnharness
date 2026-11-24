@@ -74,6 +74,14 @@ _Avoid_: Solution method, approach
 Two course files describing different routes for one plan node. The tutor asks the learner which route their course uses, and the answer is stored on the node.
 _Avoid_: Disagreement, clash
 
+**Exam file**:
+A course file that is a past exam of the course (Altklausur). It shapes practice problems; it never supplies a course method.
+_Avoid_: Old exam, test file
+
+**Exam pattern**:
+What one exam task asks about one plan node: task type, givens, what is asked, answer format, typical numbers, points, its source task. When the file has a solution, also how points are given.
+_Avoid_: Exam question, template
+
 **Course-method note**:
 The wire-only note that tells the tutor the course methods for a node (or the unresolved conflict). It is sent again when the node's methods change or a lesson-record cut drops it.
 _Avoid_: Method hint
