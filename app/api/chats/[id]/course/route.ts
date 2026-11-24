@@ -8,7 +8,7 @@
  *         inherited proposition methods came from.
  * PATCH → { path, binding }: the sidebar tick. Changes only `binding`.
  *         { path, category }: moves the file between Course material and
- *         Exams (plan 010); resets it to pending and queues it again.
+ *         Exams (plan 010) or Reference (plan 012); resets it to pending and queues it again.
  *         Both keys in one body: 400.
  */
 import { emit, fileCategory } from "@/src/core";
@@ -54,15 +54,15 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 		typeof body.path !== "string" ||
 		hasCategory === hasBinding ||
 		(hasBinding && typeof body.binding !== "boolean") ||
-		(hasCategory && body.category !== "material" && body.category !== "exam")
+		(hasCategory && body.category !== "material" && body.category !== "exam" && body.category !== "reference")
 	) {
-		return Response.json({ error: "Expected { path: string, binding: boolean } or { path: string, category: \"material\" | \"exam\" }" }, { status: 400 });
+		return Response.json({ error: "Expected { path: string, binding: boolean } or { path: string, category: \"material\" | \"exam\" | \"reference\" }" }, { status: 400 });
 	}
 	const material = record.courseMaterial;
 	const target = material?.files.find((file) => file.path === body.path);
 	if (!material || !target) return Response.json({ error: "Unknown course file" }, { status: 404 });
 	if (hasCategory) {
-		const category = body.category as "material" | "exam";
+		const category = body.category as "material" | "exam" | "reference";
 		if (fileCategory(target) === category) return Response.json({ ok: true });
 		const conflicts = material.conflicts
 			.map(({ chosen, ...conflict }) => ({
@@ -72,13 +72,15 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 			}))
 			.filter((conflict) => conflict.paths.length >= 2);
 		const { error: _error, ...rest } = target;
-		const { examPatterns, ...others } = material;
+		const { examPatterns, referenceIndex, referencePointers, ...others } = material;
 		stores.chatStore.setCourseMaterial(id, {
 			...others,
 			files: material.files.map((file) => (file.path === target.path ? { ...rest, category, categoryBy: "learner" as const, status: "pending" as const } : file)),
 			methods: material.methods.filter((method) => method.path !== target.path),
 			conflicts,
 			...(examPatterns ? { examPatterns: examPatterns.filter((pattern) => pattern.path !== target.path) } : {}),
+			...(referenceIndex ? { referenceIndex: referenceIndex.filter((entry) => entry.path !== target.path) } : {}),
+			...(referencePointers ? { referencePointers: referencePointers.filter((pointer) => pointer.path !== target.path) } : {}),
 		});
 		emit("course-material-changed", { chatId: id });
 		assignAddedCourseFiles(id, [target.path]);

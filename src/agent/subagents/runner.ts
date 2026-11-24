@@ -523,11 +523,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 		const input = (passedInput ?? resolveInput(job, passedInput)) as PdfToolInput | undefined;
 		const path = typeof input?.path === "string" && input.path.trim() ? input.path.trim() : "";
 		const question = typeof input?.question === "string" ? input.question : "";
+		const pages = typeof input?.pages === "string" && input.pages.trim() ? input.pages.trim() : undefined;
 
 		try {
 			jobStore.updateJob(jobId, { activity: "reading pdf" });
 			const result = await runPdfReaderAgent(
-				{ path, question },
+				{ path, question, ...(pages ? { pages } : {}) },
 			{
 				engine: model,
 				abortSignal: loop.abortSignal,

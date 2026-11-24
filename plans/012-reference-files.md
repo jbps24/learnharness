@@ -112,9 +112,9 @@ Desktop app (`ELECTRON_RUN_AS_NODE` unset):
 
 | Part | Status |
 |---|---|
-| 1 Contracts, store, API | |
-| 2 Table of contents extraction | |
-| 3 Reader sorts, node pointers | |
-| 4 Tutor note, scoped lookups, prompts | |
-| 5 UI | |
-| 6 Docs, build, install | |
+| 1 Contracts, store, API | green, build-review/20261124-084748-012-part-1 |
+| 2 Table of contents extraction | green, build-review/20261124-091014-012-part-2 |
+| 3 Reader sorts, node pointers | green, build-review/20261124-092347-012-part-3; skip-reader re-map + flip cleanup fix build-review/20261124-102351-012-part-3 |
+| 4 Tutor note, scoped lookups, prompts | green, build-review/20261124-094547-012-part-4 |
+| 5 UI | green, build-review/20261124-101036-012-part-5 |
+| 6 Docs, build, install |  |

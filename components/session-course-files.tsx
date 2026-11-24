@@ -75,9 +75,10 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 	const groups = [
 		{ label: "Course material", group: ordered.filter((f) => fileCategory(f) === "material") },
 		{ label: "Exams", group: ordered.filter((f) => fileCategory(f) === "exam") },
+		{ label: "Reference", group: ordered.filter((f) => fileCategory(f) === "reference") },
 	].filter((g) => g.group.length > 0);
 
-	const moveFile = async (file: CourseFile, category: "material" | "exam") => {
+	const moveFile = async (file: CourseFile, category: "material" | "exam" | "reference") => {
 		try {
 			await fetch(`/api/chats/${chatId}/course`, {
 				method: "PATCH",

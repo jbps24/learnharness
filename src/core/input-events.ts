@@ -466,7 +466,7 @@ export function questionRecoveryAppends(
 export function failedResponseAtEnd(messages: readonly LhMessage[]): Extract<LhMessage, { role: "assistant" }> | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const m = messages[i]!;
-		if (m.role === "custom" && (m.customType === "plan-block" || m.customType === "compaction" || m.customType === "lesson-record" || m.customType === "units-note" || m.customType === "break-note" || m.customType === "course-files" || m.customType === "course-method" || m.customType === "exam-pattern" || isSideQuestionMarker(m))) continue;
+		if (m.role === "custom" && (m.customType === "plan-block" || m.customType === "compaction" || m.customType === "lesson-record" || m.customType === "units-note" || m.customType === "break-note" || m.customType === "course-files" || m.customType === "course-method" || m.customType === "exam-pattern" || m.customType === "reference" || isSideQuestionMarker(m))) continue;
 		return m.role === "assistant" && m.stopReason === "error" ? m : undefined;
 	}
 	return undefined;
@@ -534,7 +534,7 @@ export function isQuestionTool(name: string): boolean {
  *  questions for the learner) can be retried. */
 export const REPLY_RETRY_READ_ONLY_TOOLS = ["find", "find_candidates", "grep", "list_propositions", "list_sessions", "ls", "pdf", "pdf_extract", "pdf_info", "pdf_search", "read", "show_image", "web_fetch", "web_fetch_pdf", "web_search"] as const;
 
-const REPLY_RETRY_SKIPPED_NOTES = ["break-note", "graph-context", "units-note", "course-files", "course-method", "exam-pattern"];
+const REPLY_RETRY_SKIPPED_NOTES = ["break-note", "graph-context", "units-note", "course-files", "course-method", "exam-pattern", "reference"];
 
 /** Ids of the latest teacher reply when it can be retried (plan 006 part 1),
  *  in record order; null when it cannot. */

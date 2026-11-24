@@ -341,4 +341,74 @@ describe("ExamFilesPanel", () => {
 			body: { path: "/course/sheet.pdf", category: "material" },
 		});
 	});
+
+	// plan 012 part 5: Move buttons: one per other category — Move to Course material, Move to Exams, Move to Reference
+	it("move buttons show one per other category for material, exam, and reference files", async () => {
+		const patches: Array<{ url: string; body: unknown }> = [];
+		const data: CourseResponse = {
+			material: {
+				files: [
+					{ path: "/course/slides.pdf", addedAt: "2026-11-22T10:00:00.000Z", via: "learner", binding: true, status: "assigned", category: "material" },
+					{ path: "/exams/ws2024.pdf", addedAt: "2026-11-22T10:01:00.000Z", via: "learner", binding: true, status: "assigned", category: "exam" },
+					{ path: "/ref/textbook.pdf", addedAt: "2026-11-22T10:02:00.000Z", via: "learner", binding: true, status: "assigned", category: "reference" },
+				],
+				methods: [],
+				conflicts: [],
+			},
+			nodes: [{ id: "n1", title: "Linear Maps" }],
+		};
+
+		const h = await mountHarness(async (input, init) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (init?.method === "PATCH") {
+				patches.push({ url, body: JSON.parse(String(init.body)) });
+				return jsonResponse({ ok: true });
+			}
+			return jsonResponse(data);
+		});
+
+		await act(async () => {
+			findButtonByText(h.doc, "Files (3)").click();
+		});
+
+		// Course material file: Move to Exams + Move to Reference
+		await act(async () => {
+			h.doc.querySelector<HTMLButtonElement>('[aria-label="Details for slides.pdf"]')!.click();
+		});
+		let dialog = h.doc.querySelector('[role="dialog"]')!;
+		assert.equal(dialog.textContent?.includes("Move to Course material"), false);
+		assert.ok(dialog.textContent?.includes("Move to Exams"));
+		const moveToRefBtn = findButtonByText(h.doc, "Move to Reference");
+		await act(async () => {
+			moveToRefBtn.click();
+		});
+		assert.deepEqual(patches[0], {
+			url: "/api/chats/chat-1/course",
+			body: { path: "/course/slides.pdf", category: "reference" },
+		});
+		await act(async () => {
+			findButtonByText(h.doc, "Close").click();
+		});
+
+		// Exam file: Move to Course material + Move to Reference
+		await act(async () => {
+			h.doc.querySelector<HTMLButtonElement>('[aria-label="Details for ws2024.pdf"]')!.click();
+		});
+		dialog = h.doc.querySelector('[role="dialog"]')!;
+		assert.ok(dialog.textContent?.includes("Move to Course material"));
+		assert.equal(dialog.textContent?.includes("Move to Exams"), false);
+		assert.ok(dialog.textContent?.includes("Move to Reference"));
+		await act(async () => {
+			findButtonByText(h.doc, "Close").click();
+		});
+
+		// Reference file: Move to Course material + Move to Exams
+		await act(async () => {
+			h.doc.querySelector<HTMLButtonElement>('[aria-label="Details for textbook.pdf"]')!.click();
+		});
+		dialog = h.doc.querySelector('[role="dialog"]')!;
+		assert.ok(dialog.textContent?.includes("Move to Course material"));
+		assert.ok(dialog.textContent?.includes("Move to Exams"));
+		assert.equal(dialog.textContent?.includes("Move to Reference"), false);
+	});
 });

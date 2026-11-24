@@ -10,7 +10,7 @@ import { backgroundCaptureStream, createBackgroundCapture, type BackgroundCaptur
 import { createWorkerRequestScope } from "../worker-request-admission.ts";
 import type { PdfResult, PdfToolInput } from "../../core/contracts.ts";
 import { getHeadless, type HeadlessApi } from "./headless.ts";
-import { pdfExtract, pdfInfo, pdfProbe, pdfSearch, type PdfSearchHit } from "./pdf-ops.ts";
+import { parsePageSpec, pdfExtract, pdfInfo, pdfProbe, pdfSearch, type PdfSearchHit } from "./pdf-ops.ts";
 
 /**
  * The pdf-reader sub-agent (sources v0, 2026-09): reads a learner-provided
@@ -127,12 +127,13 @@ export function createPdfTools(_pdfPath: string): Record<string, Tool> {
 }
 
 /** pdf_info's body (the loop's dispatch target): the triage readout. */
-async function pdfInfoText(pdfPath: string): Promise<string> {
+async function pdfInfoText(pdfPath: string, pages?: string): Promise<string> {
 	const info = await pdfInfo(pdfPath);
+	const scope = pages ? new Set(parsePageSpec(pages, info.page_count)) : null;
 	const lines = [
 		`File: ${info.path}`,
 		`Pages: ${info.page_count} (mean text length/page: ${info.mean_text_length})`,
-		...info.pages.map(
+		...info.pages.filter((p) => !scope || scope.has(p.page)).map(
 			(p) =>
 				`p${p.page}: len=${p.text_length} img=${p.image_count} math=${p.math_density.toFixed(2)}`,
 		),
@@ -202,6 +203,9 @@ export async function runPdfReaderAgent(
 	const prompt = [
 		`PDF path: ${pdfPath}`,
 		`Question (what the teacher needs from this document): ${input.question || "(no question — give a structural overview)"}`,
+		...(input.pages?.trim()
+			? [`Read within pages ${input.pages.trim()} (the section the teacher points to); widen only if the answer is clearly outside.`]
+			: []),
 		"",
 		"Read the document per your doctrine, then produce your final brief in the required format.",
 	].join("\n");
@@ -268,7 +272,7 @@ export async function runPdfReaderAgent(
 				try {
 					if (call.name === "pdf_info") {
 						opts.onActivity?.("pdf_info: triaging");
-						const r = await pdfInfoText(pdfPath);
+						const r = await pdfInfoText(pdfPath, input.pages?.trim() || undefined);
 						toolResults.push(toolText(call.id, call.name, String(r)));
 					} else if (call.name === "pdf_extract") {
 						const spec = String(args.pages ?? "all");
