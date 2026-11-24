@@ -12,23 +12,20 @@ export interface BreakTimings {
 	lengthMs: number;
 	resetMs: number;
 	leadMs: number;
-	escalateMs: number;
 	reofferMs: number;
 }
 
 const MINUTE_MS = 60_000;
 
-/** The break window's derived timings: lead = interval/9, escalate = reoffer
- *  = interval×4/9, each rounded to whole minutes. */
+/** The break window's timings: it opens at the interval (no lead) and is
+ *  re-offered 20 minutes after a skip. */
 export function breakTimings(s: { intervalMinutes: number; lengthMinutes: number; resetMinutes: number }): BreakTimings {
-	const escalateMinutes = Math.round((s.intervalMinutes * 4) / 9);
 	return {
 		intervalMs: s.intervalMinutes * MINUTE_MS,
 		lengthMs: s.lengthMinutes * MINUTE_MS,
 		resetMs: s.resetMinutes * MINUTE_MS,
-		leadMs: Math.round(s.intervalMinutes / 9) * MINUTE_MS,
-		escalateMs: escalateMinutes * MINUTE_MS,
-		reofferMs: escalateMinutes * MINUTE_MS,
+		leadMs: 0,
+		reofferMs: 20 * MINUTE_MS,
 	};
 }
 
@@ -48,19 +45,21 @@ export interface BreakSuggestion {
 }
 
 export interface BreakState {
-	window: { id: string; openedAtMs: number; escalated: boolean; noteInContext: boolean } | null;
+	window: { id: string; openedAtMs: number; escalated: boolean; noteInContext: boolean; answeredSince: boolean } | null;
 	latest: BreakSuggestion | null;
 	skipsInRow: number;
 	nextOpenAtMs: number | null;
+	/** The latest skip was of a oneMoreQuestion suggestion and no window opened since. */
+	oneMoreSkip: boolean;
 }
 
 export function windowNoteText(timings: BreakTimings): string {
 	const interval = Math.round(timings.intervalMs / MINUTE_MS);
-	return `[Session note] The learner has been learning for about ${interval} minutes. At the next closed point, suggest a short break: say so in one line, then call suggest_break with requestedBy "window" and end your turn. A closed point is a node end (its check answered correctly, no repair pending) or, better, a unit end; if the current node is the last of its unit, wait for the unit end. Never break mid-step or during a repair.`;
+	return `[Session note] The learner has been learning for about ${interval} minutes. In this turn, respond to their input in one line, then suggest a short break instead of going on: say so in one line, call suggest_break with requestedBy "window" and end your turn. Mid-node is fine. If exactly one question remains until the current node is closed, you may instead offer it first: say in one line that one question would close the node and ask whether they want to answer it before the break, then call suggest_break with requestedBy "window" and oneMoreQuestion true.`;
 }
 
 export const ESCALATION_NOTE_TEXT =
-	"[Session note] A break is overdue. Suggest it at the very next closed point, a node end included; don't hold out for the unit end.";
+	"[Session note] A break is overdue. In this turn, respond to the learner's input in one line, then suggest the break.";
 
 export function awayNoteText(awayMs: number): string {
 	return `[Session note] The learner is back after ${formatAway(awayMs)} away. If it helps, re-orient them in one line (where we are, what's next), then continue.`;
@@ -188,11 +187,22 @@ export function breakState(
 	now: number,
 ): BreakState {
 	const firstOpenMs = timings.intervalMs - timings.leadMs;
-	let window: { id: string; openedAtMs: number; escalated: boolean; noteIdx: number } | null = null;
+	let window: { id: string; openedAtMs: number; escalated: boolean; noteIdx: number; answeredSince: boolean } | null = null;
 	let latest: BreakSuggestion | null = null;
 	let skipsInRow = 0;
 	let nextOpenAtMs: number | null = firstOpenMs;
 	const requestedBy = new Map<string, "window" | "learner">();
+	const oneMore = new Set<string>();
+	let oneMoreSkip = false;
+	const skipped = (pending: BreakSuggestion, learning: number): void => {
+		if (oneMore.has(pending.toolCallId)) {
+			oneMoreSkip = true;
+			nextOpenAtMs = learning;
+		} else if (pending.requestedBy === "window") {
+			skipsInRow++;
+			nextOpenAtMs = learning + timings.reofferMs;
+		}
+	};
 
 	const learningAt = (time: number, startedAt: number | null) => (startedAt === null ? 0 : time - startedAt);
 
@@ -203,7 +213,9 @@ export function breakState(
 			if (m.role === "assistant") {
 				for (const block of m.content) {
 					if (block.type === "toolCall" && block.name === "suggest_break") {
-						requestedBy.set(block.id, (block.arguments as { requestedBy?: string } | null)?.requestedBy === "window" ? "window" : "learner");
+						const args = block.arguments as { requestedBy?: string; oneMoreQuestion?: boolean } | null;
+						requestedBy.set(block.id, args?.requestedBy === "window" ? "window" : "learner");
+						if (args?.oneMoreQuestion === true) oneMore.add(block.id);
 					}
 				}
 			} else if (m.role === "toolResult") {
@@ -217,8 +229,11 @@ export function breakState(
 					const kind = ID_OF(m, "kind");
 					const windowId = ID_OF(m, "windowId");
 					if (kind === "window") {
-						if (window && window.id === windowId) window.noteIdx = v.index!;
-						else window = { id: windowId ?? m.id, openedAtMs: learning, escalated: false, noteIdx: v.index! };
+						if (window && window.id === windowId) {
+							window.noteIdx = v.index!;
+							window.answeredSince = false;
+						} else window = { id: windowId ?? m.id, openedAtMs: learning, escalated: false, noteIdx: v.index!, answeredSince: false };
+						oneMoreSkip = false;
 					} else if (kind === "escalation" && window && window.id === windowId) {
 						window.escalated = true;
 					}
@@ -228,10 +243,7 @@ export function breakState(
 						latest = { ...latest, outcome: "taken", takenAt: m.timestamp, lengthMinutes };
 					} else if (m.customType === "break-skipped" && latest.outcome === "pending") {
 						latest = { ...latest, outcome: "skipped" };
-						if (latest.requestedBy === "window") {
-							skipsInRow++;
-							nextOpenAtMs = skipsInRow >= 2 ? null : learning + timings.reofferMs;
-						}
+						skipped(latest, learning);
 					} else if (m.customType === "break-ended") {
 						const breakMs = (m.details as { breakMs?: number } | null)?.breakMs;
 						latest = { ...latest, outcome: "ended", breakMs };
@@ -242,15 +254,15 @@ export function breakState(
 			if (latest && (latest as BreakSuggestion).outcome === "pending" && !isBreakMarker(m) && causeAt(messages, v.index!) === "learner") {
 				const pending = latest as BreakSuggestion;
 				latest = { ...pending, outcome: "skipped" };
-				if (pending.requestedBy === "window") {
-					skipsInRow++;
-					nextOpenAtMs = skipsInRow >= 2 ? null : learning + timings.reofferMs;
-				}
+				skipped(pending, learning);
 			}
+			const open = window as { noteIdx: number; answeredSince: boolean } | null;
+			if (open && v.index! > open.noteIdx && !isBreakMarker(m) && causeAt(messages, v.index!) === "learner") open.answeredSince = true;
 		}
 		if (v.reset) {
 			window = null;
 			skipsInRow = 0;
+			oneMoreSkip = false;
 			nextOpenAtMs = firstOpenMs;
 		}
 	});
@@ -258,6 +270,7 @@ export function breakState(
 	if (activityEnd !== null && now - activityEnd >= timings.resetMs) {
 		window = null;
 		skipsInRow = 0;
+		oneMoreSkip = false;
 		nextOpenAtMs = firstOpenMs;
 		if (latest && (latest as BreakSuggestion).outcome === "pending") {
 			latest = { ...(latest as BreakSuggestion), outcome: "skipped" };
@@ -265,14 +278,15 @@ export function breakState(
 	}
 
 	const contextStart = Math.max(keptIndex(messages, "lesson-record"), keptIndex(messages, "compaction"));
-	const open = window as { id: string; openedAtMs: number; escalated: boolean; noteIdx: number } | null;
+	const open = window as { id: string; openedAtMs: number; escalated: boolean; noteIdx: number; answeredSince: boolean } | null;
 	return {
 		window: open
-			? { id: open.id, openedAtMs: open.openedAtMs, escalated: open.escalated, noteInContext: open.noteIdx >= contextStart }
+			? { id: open.id, openedAtMs: open.openedAtMs, escalated: open.escalated, noteInContext: open.noteIdx >= contextStart, answeredSince: open.answeredSince }
 			: null,
 		latest,
 		skipsInRow,
 		nextOpenAtMs: enabled ? nextOpenAtMs : null,
+		oneMoreSkip,
 	};
 }
 
@@ -295,6 +309,15 @@ function keptIndex(messages: readonly LhMessage[], customType: "lesson-record" |
 	return 0;
 }
 
+/** Whether the newest message is the answer to the one more question (an
+ *  answer, plugin question answer, problem submission or thinking), not text. */
+function answersOneMoreQuestion(messages: readonly LhMessage[]): boolean {
+	const last = messages[messages.length - 1];
+	if (!last || last.role === "user") return false;
+	if (last.role === "custom") return last.customType === "practice-thinking" || last.customType === "plugin-problem-submission";
+	return last.role === "toolResult" && causeAt(messages, messages.length - 1) === "learner";
+}
+
 export function breakNotesFor(
 	messages: readonly LhMessage[],
 	sideChats: readonly SideChatThread[] | undefined,
@@ -310,6 +333,7 @@ export function breakNotesFor(
 	}
 	if (!enabled) return notes;
 	if (
+		(!state.oneMoreSkip || answersOneMoreQuestion(messages)) &&
 		hasProbeDone(messages) &&
 		state.window === null &&
 		state.latest?.outcome !== "pending" &&
@@ -323,7 +347,7 @@ export function breakNotesFor(
 		if (!state.window.noteInContext) {
 			notes.push(newBreakNoteMessage("window", windowNoteText(timings), state.window.id, now));
 		}
-		if (!state.window.escalated && clock.learningMs >= state.window.openedAtMs + timings.escalateMs) {
+		if (!state.window.escalated && state.window.answeredSince) {
 			notes.push(newBreakNoteMessage("escalation", ESCALATION_NOTE_TEXT, state.window.id, now));
 		}
 	}

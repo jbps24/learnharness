@@ -24,6 +24,7 @@ The SDK is **type-only**. Call the contexts supplied by LearnHarness, not runtim
 ## Modules
 
 - [contracts-chat](contracts-chat.md)
+- [contracts-course](contracts-course.md)
 - [contracts-graph](contracts-graph.md)
 - [contracts-jobs](contracts-jobs.md)
 - [contracts-models](contracts-models.md)
@@ -201,10 +202,18 @@ These are reachable through public data, event, inheritance or helper-type relat
 - [ExtractionRunUsage](contracts-chat.md#extractionrunusage) — `contracts-chat`
 - [ExtractionStageUsage](contracts-chat.md#extractionstageusage) — `contracts-chat`
 - [ImageSnapshot](contracts-chat.md#imagesnapshot) — `contracts-chat`
+- [RetiredReply](contracts-chat.md#retiredreply) — `contracts-chat`
 - [SideChatAnchor](contracts-chat.md#sidechatanchor) — `contracts-chat`
 - [SideChatMessage](contracts-chat.md#sidechatmessage) — `contracts-chat`
 - [SideChatThread](contracts-chat.md#sidechatthread) — `contracts-chat`
 - [TurnUsage](contracts-chat.md#turnusage) — `contracts-chat`
+- [CourseFile](contracts-course.md#coursefile) — `contracts-course`
+- [CourseFileStatus](contracts-course.md#coursefilestatus) — `contracts-course`
+- [CourseMaterial](contracts-course.md#coursematerial) — `contracts-course`
+- [ExamPattern](contracts-course.md#exampattern) — `contracts-course`
+- [NodeConflict](contracts-course.md#nodeconflict) — `contracts-course`
+- [NodeMethod](contracts-course.md#nodemethod) — `contracts-course`
+- [PropositionMethod](contracts-course.md#propositionmethod) — `contracts-course`
 - [Cluster](contracts-graph.md#cluster) — `contracts-graph`
 - [EmissionStats](contracts-graph.md#emissionstats) — `contracts-graph`
 - [GraphEdge](contracts-graph.md#graphedge) — `contracts-graph`
@@ -257,4 +266,4 @@ These are reachable through public data, event, inheritance or helper-type relat
 
 Standard JavaScript/DOM types (`Promise`, `AbortSignal`, `File`, `HTMLElement`, and utility types) use their standard contracts. Pi model/messages/tools and TypeBox schemas use the exact peer versions declared by the bundled SDK's `package.json`. Supply those peers when typechecking; they are development types, not permission to import private LearnHarness runtime modules.
 
-Coverage: **140 public types**, **58 supporting declarations**, **901 declared member signatures/variants**. Generation contains no build timestamps or absolute source paths.
+Coverage: **140 public types**, **66 supporting declarations**, **940 declared member signatures/variants**. Generation contains no build timestamps or absolute source paths.

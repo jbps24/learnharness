@@ -112,6 +112,8 @@ npm run lint           # ESLint, including import restrictions
 npm run build          # Next production build
 ```
 
+`npm test` runs `scripts/run-tests.mjs`: every run gets a fresh temporary `LH_DATA_DIR`, removed afterwards, so tests never write chats or jobs into the repo's `data/` (`tests/test-isolation.test.ts` fails when run without it). Pass test files to run only those: `node scripts/run-tests.mjs tests/jobs.test.ts`.
+
 The suite requires no paid models or real sign-in. Some tests use temporary files, native processes, or local fake endpoints: deterministic does not mean every test is pure or cannot bind a loopback port. Inspect focused-suite setup before running beside a live app.
 
 [Golden fixtures](../tests/fixtures/golden-data/README.md) exercise saved records through production paths. Keep compatibility expectations with intentional format changes; do not hand-edit fixture content to make tests pass. [Standalone skill-reader tests](../tests/skills/README.md) run separately with Python and no app runtime.

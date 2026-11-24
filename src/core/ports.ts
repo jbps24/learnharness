@@ -27,6 +27,7 @@ import type {
 	Position,
 	CoverageEntry,
 	SessionCheckpoint,
+	CourseMaterial,
 	SideChatThread,
 	TurnUsage,
 	NotesSource,
@@ -64,6 +65,11 @@ export interface ChatStore {
 	/** Persist the full native message list (the record IS the agent
 	 * state — Wave B, owner-approved 2026-09-26). */
 	saveMessages(id: string, messages: LhMessage[]): void;
+	/** In one write, remove the messages with these ids from `messages` and
+	 *  append `{ at, messages: removed }` (in record order) to `retiredReplies`;
+	 *  throws if the chat is missing or any id is not in `messages`; silent
+	 *  like `saveMessages`. */
+	retireReply(id: string, ids: readonly string[], at: string): void;
 	/** Save a processed picture once, without changing conversation activity/order. */
 	saveImageSnapshot(id: string, snapshotId: string, image: ImageSnapshot): void;
 	/** Persist the session plan tree (plan tools call this in execute). */
@@ -95,6 +101,8 @@ export interface ChatStore {
 	 *  side-chat service announces its own changes. Not conversation
 	 *  activity — updatedAt stays put. */
 	updateSideChats(id: string, update: (threads: SideChatThread[]) => SideChatThread[]): SideChatThread[] | null;
+	getCourseMaterial(chatId: string): CourseMaterial | null;
+	setCourseMaterial(chatId: string, material: CourseMaterial): void;
 }
 
 // ─── GraphStore — the append-only evidence ledgers (data/graph) ──────────────

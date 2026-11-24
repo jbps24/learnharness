@@ -46,9 +46,11 @@ function toolResultSuggestBreak(id: string, toolCallId: string, timestamp: numbe
 }
 
 describe("breaks core mutant pins", () => {
-	it("breakTimings rounds leadMs to the nearest minute (X-15)", () => {
-		// 50 / 9 = 5.555... rounds to 6 min rather than flooring to 5 min
-		assert.equal(breakTimings({ intervalMinutes: 50, lengthMinutes: 10, resetMinutes: 10 }).leadMs, 6 * MINUTE_MS);
+	// plan 011 part 1: leadMs = 0 and reofferMs = 20 * 60_000 for every interval
+	it("breakTimings sets leadMs to 0 and reofferMs to 20 min (X-15)", () => {
+		const timings = breakTimings({ intervalMinutes: 50, lengthMinutes: 10, resetMinutes: 10 });
+		assert.equal(timings.leadMs, 0);
+		assert.equal(timings.reofferMs, 20 * MINUTE_MS);
 	});
 
 	it("breakState ignores escalation notes for a stale windowId (X-16)", () => {

@@ -7,6 +7,7 @@ import { createAssistantMessageEventStream, type AssistantMessage, type Assistan
 import { externalCliEnv } from "../../core/auth-env.ts";
 import { toClaudeInput } from "../claude-code/transcript.ts";
 import { getAntigravityBinary } from "./binary.ts";
+import { ANTIGRAVITY_MODELS } from "./provider.ts";
 import { AGY_MAX_INPUT_BYTES, antigravityTooLargeMessage, buildAntigravityPrompt } from "./request.ts";
 
 export const AGY_SESSION_SETTINGS = {
@@ -46,6 +47,14 @@ export function parseActions(value: unknown, tools: Tool[]): { text: string; too
 
 /** The turn's error when agy returned no answer on the retry either. */
 export const ANTIGRAVITY_NO_ANSWER = "The Antigravity model did not finish its answer (twice). Try again or choose another model.";
+
+/** The model the one retry after an unusable run goes to. */
+export const ANTIGRAVITY_FALLBACK_MODEL = "claude-sonnet-5-5";
+
+/** True when agy's prose continues the transcript with turns it made up. */
+export function inventedTurns(response: unknown): boolean {
+	return typeof response === "string" && /^\[(user|assistant|tool call [^\]\n]+|tool result [^\]\n]+)\]/m.test(response);
+}
 
 export type RunAntigravity =(binary: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
 
@@ -87,20 +96,24 @@ export function createAntigravityStream(run: RunAntigravity = (binary, args, opt
 				} };
 				const promptFile = join(cwd, "request.txt");
 				await writeFile(promptFile, prompt, { mode: 0o600 });
-				const args = ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands",
+				const argsFor = (modelId: string, effort: string | null | undefined) => ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands",
 					"--settings", JSON.stringify(settings), "--json-schema", JSON.stringify(actionSchema(input.tools)), "--print-timeout", "5m",
-					...(model.id === "default" ? [] : ["--model", model.id]),
-					// Pi has already clamped reasoning to this model's supported levels.
-					...(options.reasoning && model.thinkingLevelMap?.[options.reasoning] ? ["--effort", model.thinkingLevelMap[options.reasoning]!] : []),
+					...(modelId === "default" ? [] : ["--model", modelId]),
+					...(effort ? ["--effort", effort] : []),
 				];
+				// Pi has already clamped reasoning to this model's supported levels.
+				const args = argsFor(model.id, options.reasoning && model.thinkingLevelMap?.[options.reasoning]);
+				const fallbackMap = ANTIGRAVITY_MODELS.find((m) => m.id === ANTIGRAVITY_FALLBACK_MODEL)?.thinkingLevelMap;
+				const fallbackLevel = options.reasoning === "xhigh" || options.reasoning === "max" ? "high" : options.reasoning;
+				const fallbackArgs = argsFor(ANTIGRAVITY_FALLBACK_MODEL, fallbackLevel && fallbackMap?.[fallbackLevel]);
 				if (options.signal?.aborted) throw new Error("Request was aborted");
 				const env = externalCliEnv();
 				// Use the CLI's saved account; never select API-key/ADC auth from the app environment.
 				for (const name of ["GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_ADC_AUTH", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_APPLICATION_CREDENTIALS"]) delete env[name];
 				options.signal?.addEventListener("abort", abort, { once: true });
 				stream.push({ type: "start", partial: message });
-				const attempt = () => new Promise<Record<string, unknown>>((resolve, reject) => {
-					child = run(binary, args, { cwd: workdir, env });
+				const attempt = (runArgs: string[]) => new Promise<Record<string, unknown>>((resolve, reject) => {
+					child = run(binary, runArgs,{ cwd: workdir, env });
 					let stdout = "", stderr = "";
 					child!.stdout.setEncoding("utf8").on("data", (chunk: string) => {
 						stdout += chunk;
@@ -120,15 +133,19 @@ export function createAntigravityStream(run: RunAntigravity = (binary, args, opt
 					});
 					child!.stdin.end(JSON.stringify({ event: "user", message: { content: prompt } }) + "\n");
 				});
-				let envelope = await attempt();
-				// Gemini sometimes writes its answer as prose and never calls agy's
-				// finish tool (worst when the prose runs into the print timeout); agy
-				// still reports SUCCESS, just without structured output. A second
-				// attempt with the same request usually answers.
-				if (envelope.structured_output == null) {
+				const unusable = (e: Record<string, unknown>) => e.structured_output == null || inventedTurns(e.response);
+				let envelope = await attempt(args);
+				// A run is unusable for two reasons: Gemini sometimes writes its answer
+				// as prose and never calls agy's finish tool (worst when the prose runs
+				// into the print timeout; agy still reports SUCCESS, just without
+				// structured output), or its prose invents transcript turns ("[user]",
+				// "[tool result ...]"). One retry with the same request goes to the
+				// fallback model, Claude Sonnet 5.5, recorded as the message's model.
+				if (unusable(envelope)) {
 					if (options.signal?.aborted) throw new Error("Request was aborted");
-					envelope = await attempt();
-					if (envelope.structured_output == null) throw new Error(ANTIGRAVITY_NO_ANSWER);
+					envelope = await attempt(fallbackArgs);
+					if (unusable(envelope)) throw new Error(ANTIGRAVITY_NO_ANSWER);
+					message.model = ANTIGRAVITY_FALLBACK_MODEL;
 				}
 				const actions = parseActions(envelope.structured_output, input.tools);
 				const usage = envelope.usage as Record<string, number> | undefined;

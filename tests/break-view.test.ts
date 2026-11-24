@@ -18,11 +18,16 @@ const userAt = (id: string, text: string, timestamp: number): LhMessage => ({
 	timestamp,
 });
 
-const suggestBreakCall = (callId: string, timestamp: number, ok = true, isError = !ok): LhMessage[] => [
+const suggestBreakCall = (callId: string, timestamp: number, ok = true, isError = !ok, oneMoreQuestion?: boolean): LhMessage[] => [
 	({
 		id: `a_${callId}`,
 		role: "assistant",
-		content: [{ type: "toolCall", id: callId, name: "suggest_break", arguments: { requestedBy: "window" } }],
+		content: [{
+			type: "toolCall",
+			id: callId,
+			name: "suggest_break",
+			arguments: oneMoreQuestion ? { requestedBy: "window", oneMoreQuestion: true } : { requestedBy: "window" },
+		}],
 		stopReason: "toolUse",
 		timestamp,
 	}) as never,
@@ -160,5 +165,14 @@ describe("projectView data-break", () => {
 		assert.deepEqual(parts[0]!.data, { toolCallId: "c1", state: "skipped" });
 		assert.equal(parts[1]!.id, "br_c2");
 		assert.deepEqual(parts[1]!.data, { toolCallId: "c2", state: "offered" });
+	});
+
+	// plan 011 part 3: an ok suggest_break call with oneMoreQuestion true carries oneMoreQuestion on data-break
+	it("carries oneMoreQuestion on data-break when suggest_break sets oneMoreQuestion true", () => {
+		const msgs = [...suggestBreakCall("c1", 10 * MIN, true, false, true)];
+		const parts = breakPartsOf(msgs);
+		assert.equal(parts.length, 1);
+		assert.equal(parts[0]!.id, "br_c1");
+		assert.deepEqual(parts[0]!.data, { toolCallId: "c1", state: "offered", oneMoreQuestion: true });
 	});
 });

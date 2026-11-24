@@ -44,8 +44,8 @@ function fauxAgentBuilder(): (opts: AgentBuildOptions & { teaching: boolean }) =
 		}) as unknown as TeachingAgent;
 }
 
-function build41MinTranscript(now: number, includeProbeDone: boolean): LhMessage[] {
-	const start = now - 41 * MIN;
+function build46MinTranscript(now: number, includeProbeDone: boolean): LhMessage[] {
+	const start = now - 46 * MIN;
 	const msgs: LhMessage[] = [
 		{ ...newUserMessage("start"), id: "u_start", timestamp: start },
 	];
@@ -70,7 +70,7 @@ function build41MinTranscript(now: number, includeProbeDone: boolean): LhMessage
 			} as never,
 		);
 	}
-	for (const offsetMin of [8, 16, 24, 32, 40]) {
+	for (const offsetMin of [8, 16, 24, 32, 40, 45]) {
 		msgs.push({
 			...newUserMessage(`msg_${offsetMin}`),
 			id: `u_${offsetMin}`,
@@ -94,11 +94,11 @@ async function runAndSettle(
 }
 
 describe("break notes in chat-handler", () => {
-	// plan 002 part 4: a learner text input at 41 min of learning carries one window note
-	it("appends one window break-note on a learner text input at 41 min of learning", async () => {
-		const chat = stores.chatStore.createChat("Teach 41m");
+	// plan 002 part 4: a learner text input at 46 min of learning carries one window note
+	it("appends one window break-note on a learner text input at 46 min of learning", async () => {
+		const chat = stores.chatStore.createChat("Teach 46m");
 		stores.chatStore.saveSettings(chat.id, { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" } });
-		stores.chatStore.saveMessages(chat.id, build41MinTranscript(Date.now(), true));
+		stores.chatStore.saveMessages(chat.id, build46MinTranscript(Date.now(), true));
 
 		const res = await runAndSettle(chat.id, { type: "text", text: "Next topic please" });
 		assert.equal(res.status, 200);
@@ -111,11 +111,11 @@ describe("break notes in chat-handler", () => {
 		assert.equal((breakNotes[0]!.details as { kind?: string } | null)?.kind, "window");
 	});
 
-	// plan 002 part 4: an automatic steers wake at 41 min carries none
-	it("does not append a break-note on an automatic steers wake at 41 min", async () => {
-		const chat = stores.chatStore.createChat("Steers 41m");
+	// plan 002 part 4: an automatic steers wake at 46 min carries none
+	it("does not append a break-note on an automatic steers wake at 46 min", async () => {
+		const chat = stores.chatStore.createChat("Steers 46m");
 		stores.chatStore.saveSettings(chat.id, { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" } });
-		stores.chatStore.saveMessages(chat.id, build41MinTranscript(Date.now(), true));
+		stores.chatStore.saveMessages(chat.id, build46MinTranscript(Date.now(), true));
 
 		const steer = buildSubagentSteer(
 			{ id: "job_break_test", kind: "research", toolCallId: "call_res_1" },
@@ -133,9 +133,9 @@ describe("break notes in chat-handler", () => {
 
 	// plan 002 part 4: a practice chat never carries break notes
 	it("never appends break notes on a practice chat", async () => {
-		const chat = stores.chatStore.createChat("Practice 41m", "practice");
+		const chat = stores.chatStore.createChat("Practice 46m", "practice");
 		stores.chatStore.saveSettings(chat.id, { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" } });
-		stores.chatStore.saveMessages(chat.id, build41MinTranscript(Date.now(), false));
+		stores.chatStore.saveMessages(chat.id, build46MinTranscript(Date.now(), false));
 
 		const res = await runAndSettle(chat.id, { type: "text", text: "Let's practice" });
 		assert.equal(res.status, 200);

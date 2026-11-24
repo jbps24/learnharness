@@ -30,6 +30,7 @@ function makeMemoryChatStore(): ChatStore {
 		},
 		getChat: (id) => chats.get(id) ?? null,
 		listChats: (): ChatSummary[] => [],
+		retireReply: () => { throw new Error("retireReply is not used here"); },
 		saveMessages: (id, messages) => {
 			const rec = chats.get(id);
 			if (rec) rec.messages = messages;
@@ -45,6 +46,8 @@ function makeMemoryChatStore(): ChatStore {
 		renameChat: (id) => chats.get(id)!,
 		deleteChat: (id) => chats.delete(id),
 		updateSideChats: (_id: string, _fn: (t: SideChatThread[]) => SideChatThread[]) => null,
+		getCourseMaterial: () => null,
+		setCourseMaterial: () => {},
 	};
 }
 

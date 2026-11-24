@@ -90,7 +90,10 @@ export interface LhMarkerMessage {
 		| "break-note"
 		| "break-taken"
 		| "break-skipped"
-		| "break-ended";
+		| "break-ended"
+		| "course-files"
+		| "course-method"
+		| "exam-pattern";
 	/** The model-facing text ("" for plan blocks — UI-only). */
 	content: string;
 	display: boolean;
@@ -409,10 +412,51 @@ export function newUnitsNoteMessage(): LhMarkerMessage {
 	};
 }
 
+export function newCourseFilesNoteMessage(paths: string[]): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "course-files",
+		content: [
+			"[Course material] This lesson's course files (their methods are binding):",
+			...paths.map((p) => `- ${p}`),
+			"",
+			"Files the learner switched off are not listed and no longer bind.",
+		].join("\n"),
+		display: false,
+		details: { paths },
+		timestamp: Date.now(),
+	};
+}
+
+export function newCourseMethodNoteMessage(nodeId: string, text: string, digest: string): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "course-method",
+		content: text,
+		display: false,
+		details: { nodeId, digest },
+		timestamp: Date.now(),
+	};
+}
+
+export function newExamPatternNoteMessage(text: string, digest: string): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "exam-pattern",
+		content: text,
+		display: false,
+		details: { digest },
+		timestamp: Date.now(),
+	};
+}
+
 /** A break session note (plan 002 part 2). Wire-only: the view renders
  *  nothing for it. A fresh window note's windowId is its own id. */
 export function newBreakNoteMessage(
-	kind: "window" | "escalation" | "away",
+	kind: "window" | "escalation" | "away" | "one-more-question",
 	text: string,
 	windowId?: string,
 	now: number = Date.now(),
@@ -443,14 +487,14 @@ export function newBreakTakenMessage(toolCallId: string, lengthMinutes: number, 
 }
 
 /** The learner declined the suggested break. UI-only: toLlmMessages filters it. */
-export function newBreakSkippedMessage(toolCallId: string, now: number = Date.now()): LhMarkerMessage {
+export function newBreakSkippedMessage(toolCallId: string, now: number = Date.now(), oneMoreQuestion = false): LhMarkerMessage {
 	return {
 		id: newMessageId(),
 		role: "custom",
 		customType: "break-skipped",
 		content: "",
 		display: true,
-		details: { toolCallId },
+		details: oneMoreQuestion ? { toolCallId, oneMoreQuestion: true } : { toolCallId },
 		timestamp: now,
 	};
 }
@@ -1067,7 +1111,7 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
 		if (["practice-thinking", "plugin-problem-submission", "practice-next", "break-taken", "break-skipped", "break-ended"].includes(message.customType)) return "learner";
-		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "lesson-record", "units-note", "break-note"].includes(message.customType) ? "neutral" : "unrecognizable";
+		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "lesson-record", "units-note", "break-note", "course-files", "course-method", "exam-pattern"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {
 		const pluginAnswer = readPluginQuestionAnswer(message.details);

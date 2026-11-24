@@ -18,7 +18,8 @@ const T0 = 1_700_000_000_000;
 const DEFAULT_BREAKS = { enabled: true, intervalMinutes: 45, lengthMinutes: 5, resetMinutes: 5 };
 
 const EXPECTED_DESCRIPTION =
-	'Offer the learner a short break. Call it only at a closed point: when a [Session note] says a break is due, or whenever the learner asks for a break (requestedBy "learner"). First say it in one line of ordinary prose about the material (e.g. that the unit is closed and this is a good moment), then call this tool and end your turn. The learner chooses Take or Skip in the app; don\'t ask them again in prose.';
+	'Offer the learner a short break. Call it when a [Session note] says a break is due, in that same turn, or whenever the learner asks for one (requestedBy "learner"). First say it in one line of ordinary prose, then call this tool and end your turn. With oneMoreQuestion true, your line offers the one question that would close the current node first. The learner chooses in the app; don\'t ask them again in prose.';
+const R5 = 'oneMoreQuestion only goes with requestedBy "window".';
 const OK1 = "Break offered. End your turn now; the learner chooses in the app.";
 const R1 = 'No break is due right now. Suggest a break only after a [Session note] says one is due, or when the learner asks (requestedBy "learner").';
 const R2 = "Teaching hasn't started yet. A due break waits for the first closed point in teaching.";
@@ -129,6 +130,7 @@ async function execSuggestBreak(
 	messages: LhMessage[],
 	requestedBy: "window" | "learner",
 	now = T0 + 60_000,
+	oneMoreQuestion?: boolean,
 ) {
 	const tool = suggestBreakTool({
 		chatId: "chat_1",
@@ -136,7 +138,10 @@ async function execSuggestBreak(
 		breaks: () => DEFAULT_BREAKS,
 		now: () => now,
 	}).suggest_break!;
-	const res = await tool.execute("call_sb_exec", { requestedBy });
+	const res = await tool.execute(
+		"call_sb_exec",
+		oneMoreQuestion !== undefined ? { requestedBy, oneMoreQuestion } : { requestedBy },
+	);
 	const text = res.content[0]?.type === "text" ? res.content[0].text : "";
 	return { text, details: res.details };
 }
@@ -341,5 +346,73 @@ describe("suggest_break tool", () => {
 		const res = await execSuggestBreak(messages, "window");
 		assert.equal(res.text, OK1);
 		assert.deepEqual(res.details, { ok: true, requestedBy: "window" });
+	});
+
+	// plan 011 part 2: suggest_break gains oneMoreQuestion?: boolean with requestedBy "window", and its result details carry it
+	it("round-trips oneMoreQuestion true and false in details for requestedBy window", async () => {
+		const messages: LhMessage[] = [
+			userMsg("u1", T0),
+			windowNote(T0 + 1000),
+			...answeredQuiz("q1", T0 + 2000),
+		];
+		const resTrue = await execSuggestBreak(messages, "window", T0 + 60_000, true);
+		assert.equal(resTrue.text, OK1);
+		assert.deepEqual(resTrue.details, { ok: true, requestedBy: "window", oneMoreQuestion: true });
+
+		const resFalse = await execSuggestBreak(messages, "window", T0 + 60_000, false);
+		assert.equal(resFalse.text, OK1);
+		assert.deepEqual(resFalse.details, { ok: true, requestedBy: "window", oneMoreQuestion: false });
+	});
+
+	// plan 011 part 2: with requestedBy "learner", oneMoreQuestion is refused with R5
+	it("refuses oneMoreQuestion true with requestedBy learner using R5", async () => {
+		const messages: LhMessage[] = [
+			userMsg("u1", T0),
+			windowNote(T0 + 1000),
+			...answeredQuiz("q1", T0 + 2000),
+		];
+		const res = await execSuggestBreak(messages, "learner", T0 + 60_000, true);
+		assert.equal(res.text, R5);
+		assert.deepEqual(res.details, { ok: false });
+
+		const resFalse = await execSuggestBreak(messages, "learner", T0 + 60_000, false);
+		assert.equal(resFalse.text, R5);
+		assert.deepEqual(resFalse.details, { ok: false });
+	});
+
+	// plan 011 part 2: the window guards stay (window open, teaching started, no open question, no pending offer)
+	it("keeps window guards active when oneMoreQuestion is true", async () => {
+		const noWindow = await execSuggestBreak([userMsg("u1", T0), ...answeredQuiz("q1", T0 + 1000)], "window", T0 + 60_000, true);
+		assert.equal(noWindow.text, R1);
+		assert.deepEqual(noWindow.details, { ok: false });
+
+		const openQuestion = await execSuggestBreak(
+			[userMsg("u1", T0), windowNote(T0 + 1000), teachQuizCall("a1", "q1", T0 + 2000)],
+			"window",
+			T0 + 60_000,
+			true,
+		);
+		assert.equal(openQuestion.text, R3);
+		assert.deepEqual(openQuestion.details, { ok: false });
+
+		const noTeach = await execSuggestBreak([userMsg("u1", T0), windowNote(T0 + 1000)], "window", T0 + 60_000, true);
+		assert.equal(noTeach.text, R2);
+		assert.deepEqual(noTeach.details, { ok: false });
+
+		const pending = await execSuggestBreak(
+			[
+				userMsg("u1", T0),
+				assistantCall("a_sb", "sb1", "suggest_break", { requestedBy: "learner" }, T0 + 500),
+				toolResultMsg("r_sb", "sb1", "suggest_break", { ok: true, requestedBy: "learner" }, T0 + 600),
+				newBreakTakenMessage("sb1", 5, T0 + 700),
+				windowNote(T0 + 1000),
+				...answeredQuiz("q1", T0 + 2000),
+			],
+			"window",
+			T0 + 60_000,
+			true,
+		);
+		assert.equal(pending.text, R4);
+		assert.deepEqual(pending.details, { ok: false });
 	});
 });

@@ -6,6 +6,7 @@ export interface BreakDividerData {
 	takenAt?: number;
 	lengthMinutes?: number;
 	breakMs?: number;
+	oneMoreQuestion?: boolean;
 }
 
 const clock = (ms: number) => {
@@ -45,7 +46,7 @@ export function BreakDivider({
 							{`Take ${data.lengthMinutes ?? 10} min`}
 						</Button>
 						<Button type="button" variant="ghost" size="xs" disabled={busy} onClick={onSkip}>
-							Skip
+							{data.oneMoreQuestion ? "Answer it first" : "Skip"}
 						</Button>
 					</>
 				)}

@@ -74,6 +74,8 @@ export interface PdfReaderOptions {
 	maxIterations?: number;
 	/** Debug: raw provider-event recording key (LH_PROVIDER_EVENTS=1). */
 	chatId?: string;
+	/** Appended after the reading doctrine, which stays verbatim (course-assign worker). */
+	instructionsSuffix?: string;
 }
 
 export interface PdfReaderInput extends PdfToolInput {}
@@ -219,7 +221,7 @@ export async function runPdfReaderAgent(
 		for (let iteration = 0; maxIterations === undefined || iteration < maxIterations; iteration++) {
 			const result = await streamOnce(
 				streamEngine,
-				INSTRUCTIONS,
+				opts.instructionsSuffix ? `${INSTRUCTIONS}\n\n${opts.instructionsSuffix}` : INSTRUCTIONS,
 				messages,
 				toolDeclarations,
 				sessionId,

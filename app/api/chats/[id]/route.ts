@@ -3,11 +3,18 @@ import { pendingPluginQuestionOf, activeProblemOf } from "@/src/core";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params;
-	if (new URL(req.url).searchParams.get("view") === "stats") {
+	const view = new URL(req.url).searchParams.get("view");
+	if (view === "stats") {
 		// Stats refreshes don't adopt history or need plugin availability.
 		const chat = getChat(id);
 		return chat ? Response.json({ turns: chat.turns, pricing: sessionCost(chat) })
 			: Response.json({ error: "Not found" }, { status: 404 });
+	}
+	if (view === "settings" || view === "coverage") {
+		// Small views: the model picker and the coverage ring need one field, not the whole history.
+		const chat = getChat(id);
+		if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
+		return Response.json(view === "settings" ? { settings: chat.settings } : { coverage: sessionCoverage(id) });
 	}
 	await reconcilePluginQuestionCompatibility(stores.chatStore, id);
 	let chat = getChat(id);

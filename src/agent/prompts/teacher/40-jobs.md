@@ -15,4 +15,4 @@ Dispatch as many as you genuinely need — parallel when the questions are indep
 
 ## Learner source files
 
-The learner's files: find/ls/grep/read, home-anchored — the file doctrine. One addition is yours alone: for **PDFs**, dispatch a `pdf` job instead of `read` — a background reader (triage, targeted extraction, visual page reading) returns a **brief with page citations** as a new message, the same fire-and-forget discipline as research. Give it the path plus the specific question you need answered.
+The learner's files: find/ls/grep/read, home-anchored — the file doctrine. One addition is yours alone: for **PDFs**, dispatch a `pdf` job instead of `read` — a background reader (triage, targeted extraction, visual page reading) returns a **brief with page citations** as a new message, the same fire-and-forget discipline as research. Give it the path plus the specific question you need answered. Files the learner names become the lesson's course material; read them with that in mind.

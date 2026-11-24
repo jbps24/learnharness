@@ -20,6 +20,7 @@ import { jobTools, type DemoInput, type PdfInput, type ResearchInput, type Visua
 import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
 import { suggestBreakTool } from "./tools/breaks.ts";
+import { courseRouteTool } from "./tools/course-route.ts";
 import { proberGraphTools } from "./tools/graph.ts";
 import { readTool } from "./tools/read.ts";
 import { lsTool } from "./tools/ls.ts";
@@ -487,6 +488,7 @@ export function createTeacherTools(
 				breaks: ctx.breaks,
 				now: ctx.now,
 			}),
+			...courseRouteTool({ chatId: ctx.chatId, chatStore: ctx.chatStore }),
 		},
 		withoutMechanics(enabled),
 		),

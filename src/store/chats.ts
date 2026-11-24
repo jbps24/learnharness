@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { PATHS } from "../../config.ts";
 import { emit } from "../core/events.ts";
 import type { ChatStore } from "../core/ports.ts";
-import type { ChatRecord, ChatSettings, ChatSummary, ExtractionRunUsage, ImageSnapshot, PlanTree, SideChatThread, TurnUsage } from "../core/contracts.ts";
+import type { ChatRecord, ChatSettings, ChatSummary, CourseMaterial, ExtractionRunUsage, ImageSnapshot, PlanTree, SideChatThread, TurnUsage } from "../core/contracts.ts";
 import { CURRENT_CHAT_VERSION } from "../core/contracts.ts";
 import type { LhMessage } from "../core/native-messages.ts";
 import { activeProblemOf, danglingQuestionOf } from "../core/native-messages.ts";
@@ -139,6 +139,19 @@ function saveMessages(id: string, messages: LhMessage[]): void {
 	writeChat(record);
 }
 
+function retireReply(id: string, ids: readonly string[], at: string): void {
+	const record = getChat(id);
+	if (!record) throw new Error(`Chat not found: ${id}`);
+	const wanted = new Set(ids);
+	const known = new Set(record.messages.map((m) => m.id));
+	for (const wid of wanted) if (!known.has(wid)) throw new Error(`Message not found: ${wid}`);
+	const removed = record.messages.filter((m) => wanted.has(m.id));
+	record.messages = record.messages.filter((m) => !wanted.has(m.id));
+	record.retiredReplies = [...(record.retiredReplies ?? []), { at, messages: removed }];
+	record.updatedAt = new Date().toISOString();
+	writeChat(record);
+}
+
 /** A synchronous read/merge/write keeps concurrent worker and turn writes from losing snapshots. */
 function saveImageSnapshot(id: string, snapshotId: string, image: ImageSnapshot): void {
 	if (!/^[a-f0-9]{64}$/.test(snapshotId) || createHash("sha256").update(Buffer.from(image.data, "base64")).digest("hex") !== snapshotId) {
@@ -243,11 +256,25 @@ function updateSideChats(id: string, update: (threads: SideChatThread[]) => Side
 	return next;
 }
 
+function getCourseMaterial(chatId: string): CourseMaterial | null {
+	return getChat(chatId)?.courseMaterial ?? null;
+}
+
+/** Like saveTree: course bookkeeping is not conversation activity, so
+ *  updatedAt stays put. */
+function setCourseMaterial(chatId: string, material: CourseMaterial): void {
+	const record = getChat(chatId);
+	if (!record) throw new Error(`Chat not found: ${chatId}`);
+	record.courseMaterial = material;
+	writeChat(record);
+}
+
 export const chatStore: ChatStore = {
 	createChat,
 	getChat,
 	listChats,
 	saveMessages,
+	retireReply,
 	saveImageSnapshot,
 	saveTree,
 	saveSettings,
@@ -256,4 +283,6 @@ export const chatStore: ChatStore = {
 	appendTurnUsage,
 	appendExtractionUsage,
 	updateSideChats,
+	getCourseMaterial,
+	setCourseMaterial,
 };

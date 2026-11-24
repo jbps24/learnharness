@@ -1,6 +1,7 @@
 # 002 — Learning breaks: suggest a short break about every 45 minutes of a teaching lesson
 
 Status: **approved** 2026-11-21 (spec-level choices 1–11 and all DRAFT texts in Parts 1–7 confirmed as written; the settings placement was corrected first).
+Timing rules superseded by plan 011.
 
 ## Starting a session on this plan
 

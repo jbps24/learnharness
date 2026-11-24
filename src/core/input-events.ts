@@ -31,6 +31,7 @@
 import type { QuestionAnswerData } from "./question-core.ts";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { validatePluginSubmissionImageArray, validatePluginSubmissionImages, type PluginSubmissionImages, type PluginSubmissionOccurrence } from "./plugin-submissions.ts";
+import type { SideChatThread } from "./contracts/chat.ts";
 import type { LhMessage } from "./native-messages.ts";
 import {
 	activeProblemOf,
@@ -40,6 +41,8 @@ import {
 	danglingQuestionOf,
 	newAnswerResult,
 	newBreakEndedMessage,
+	newBreakNoteMessage,
+	newBreakSkippedMessage,
 	newNextMessage,
 	newProblemDismissedMarker,
 	newThinkingMessage,
@@ -81,7 +84,11 @@ export type ChatInput =
 	 *  only with nothing active (mid-problem input rides the dock). */
 	| { type: "next" }
 	/** Resume after a taken break (plan 002 part 4). */
-	| { type: "break-continue"; toolCallId: string };
+	| { type: "break-continue"; toolCallId: string }
+	/** Skip of a one-more-question break offer (plan 011 part 2): the marker plus the teacher's note. */
+	| { type: "break-skip-one-more"; toolCallId: string }
+	/** Retry the latest effect-free teacher reply (plan 006 part 1). */
+	| { type: "retry-reply" };
 
 /** A wake-pipeline steer delivery — same turn composition, server-origin.
  *  Wave C (2026-09-26): the idle wake carries EVERY queued marker as its
@@ -268,6 +275,8 @@ export function parseChatInput(input: unknown): ChatInput {
 			return { type: "continue" };
 		case "retry":
 			return { type: "retry" };
+		case "retry-reply":
+			return { type: "retry-reply" };
 		case "retry-question":
 			if (typeof i.messageId !== "string" || !i.messageId || typeof i.toolCallId !== "string" || !i.toolCallId ||
 				typeof i.contentIndex !== "number" || !Number.isSafeInteger(i.contentIndex) || i.contentIndex < 0) {
@@ -290,9 +299,28 @@ export function parseChatInput(input: unknown): ChatInput {
 		case "break-continue":
 			if (typeof i.toolCallId !== "string" || !i.toolCallId) throw new ChatInputError("break-continue input requires toolCallId");
 			return { type: "break-continue", toolCallId: i.toolCallId };
+		case "break-skip-one-more":
+			if (typeof i.toolCallId !== "string" || !i.toolCallId) throw new ChatInputError("break-skip-one-more input requires toolCallId");
+			return { type: "break-skip-one-more", toolCallId: i.toolCallId };
 		default:
 			throw new ChatInputError(`unknown input type: ${String(i.type)}`);
 	}
+}
+
+const ONE_MORE_QUESTION_NOTE_TEXT =
+	'[Session note] The learner wants to answer the one remaining question of this node before the break. Pose it now. After their answer, give one line of feedback and suggest the break (requestedBy "window").';
+
+/** Whether the suggest_break call carried oneMoreQuestion: true. */
+export function isOneMoreQuestionOffer(messages: readonly LhMessage[], toolCallId: string): boolean {
+	for (const m of messages) {
+		if (m.role !== "assistant") continue;
+		for (const block of m.content) {
+			if (block.type === "toolCall" && block.id === toolCallId && block.name === "suggest_break") {
+				return (block.arguments as { oneMoreQuestion?: unknown } | null)?.oneMoreQuestion === true;
+			}
+		}
+	}
+	return false;
 }
 
 /**
@@ -305,9 +333,10 @@ export function parseChatInput(input: unknown): ChatInput {
  * double-answering.
  */
 export function inputAppends(
-	record: { messages: LhMessage[]; kind?: string },
+	record: { messages: LhMessage[]; kind?: string; sideChats?: readonly SideChatThread[] },
 	input: ChatInput,
 	_now: number = Date.now(),
+	breaks: { enabled: boolean; intervalMinutes: number; lengthMinutes: number; resetMinutes: number } = BREAK_DEFAULTS,
 ): LhMessage[] {
 	assertPluginQuestionInputAllowed(record.messages, input);
 	assertNativeSubmissionTarget(record.messages, input);
@@ -369,6 +398,20 @@ export function inputAppends(
 				_now,
 			)];
 		}
+		case "break-skip-one-more": {
+			const latest = breakState(record.messages, record.sideChats, breakTimings(breaks), breaks.enabled, _now).latest;
+			if (!latest || latest.outcome !== "pending" || latest.toolCallId !== input.toolCallId || !isOneMoreQuestionOffer(record.messages, input.toolCallId)) {
+				throw new ChatInputError("No one-more-question break offer is open.");
+			}
+			return [
+				newBreakSkippedMessage(input.toolCallId, _now, true),
+				newBreakNoteMessage("one-more-question", ONE_MORE_QUESTION_NOTE_TEXT, undefined, _now),
+			];
+		}
+		case "retry-reply":
+			// The server replaces the reply itself (a later plan 006 part);
+			// it appends nothing here.
+			return [];
 	}
 }
 
@@ -423,7 +466,7 @@ export function questionRecoveryAppends(
 export function failedResponseAtEnd(messages: readonly LhMessage[]): Extract<LhMessage, { role: "assistant" }> | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const m = messages[i]!;
-		if (m.role === "custom" && (m.customType === "plan-block" || m.customType === "compaction" || m.customType === "lesson-record" || m.customType === "units-note" || m.customType === "break-note" || isSideQuestionMarker(m))) continue;
+		if (m.role === "custom" && (m.customType === "plan-block" || m.customType === "compaction" || m.customType === "lesson-record" || m.customType === "units-note" || m.customType === "break-note" || m.customType === "course-files" || m.customType === "course-method" || m.customType === "exam-pattern" || isSideQuestionMarker(m))) continue;
 		return m.role === "assistant" && m.stopReason === "error" ? m : undefined;
 	}
 	return undefined;
@@ -485,4 +528,39 @@ function dismissalConclusion(record: { messages: LhMessage[] }): LhMessage[] {
 /** Is this tool name a question tool (dock-owned, answer-gated)? */
 export function isQuestionTool(name: string): boolean {
 	return (QUESTION_TOOLS as readonly string[]).includes(name);
+}
+
+/** Tools whose use leaves nothing lasting: a reply that only used these (and
+ *  questions for the learner) can be retried. */
+export const REPLY_RETRY_READ_ONLY_TOOLS = ["find", "find_candidates", "grep", "list_propositions", "list_sessions", "ls", "pdf", "pdf_extract", "pdf_info", "pdf_search", "read", "show_image", "web_fetch", "web_fetch_pdf", "web_search"] as const;
+
+const REPLY_RETRY_SKIPPED_NOTES = ["break-note", "graph-context", "units-note", "course-files", "course-method", "exam-pattern"];
+
+/** Ids of the latest teacher reply when it can be retried (plan 006 part 1),
+ *  in record order; null when it cannot. */
+export function retryableReply(messages: readonly LhMessage[]): string[] | null {
+	const readOnly = REPLY_RETRY_READ_ONLY_TOOLS as readonly string[];
+	const collected: LhMessage[] = [];
+	let input: LhMessage | undefined;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i]!;
+		if (m.role === "custom" && (isSideQuestionMarker(m) || REPLY_RETRY_SKIPPED_NOTES.includes(m.customType))) continue;
+		if (m.role === "assistant" || (m.role === "toolResult" && !isQuestionTool(m.toolName))) {
+			collected.unshift(m);
+			continue;
+		}
+		input = m;
+		break;
+	}
+	if (!input || !collected.some((m) => m.role === "assistant")) return null;
+	if (!(input.role === "user" || (input.role === "toolResult" && isQuestionTool(input.toolName)))) return null;
+	for (const m of collected) {
+		if (m.role === "assistant") {
+			if (m.stopReason !== "stop" && m.stopReason !== "toolUse") return null;
+			for (const block of m.content) {
+				if (block.type === "toolCall" && !readOnly.includes(block.name) && !isQuestionTool(block.name)) return null;
+			}
+		} else if (m.role === "toolResult" && !readOnly.includes(m.toolName)) return null;
+	}
+	return collected.map((m) => m.id);
 }

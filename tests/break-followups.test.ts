@@ -32,6 +32,7 @@ function makeChatStore(initial: ChatRecord): ChatStore {
 		},
 		getChat: (id: string) => chats.get(id) ?? null,
 		listChats: () => [],
+		retireReply: () => { throw new Error("retireReply is not used here"); },
 		saveMessages: (id: string, messages: readonly LhMessage[]) => {
 			const c = chats.get(id);
 			if (c) c.messages = [...messages];
@@ -49,6 +50,8 @@ function makeChatStore(initial: ChatRecord): ChatStore {
 		},
 		deleteChat: () => false,
 		updateSideChats: () => null,
+		getCourseMaterial: () => null,
+		setCourseMaterial: () => {},
 	};
 }
 
@@ -228,6 +231,42 @@ describe("createTeacherTools breaks & now", () => {
 		});
 		const refusedRes = await afterReset.suggest_break!.execute("call_sb_2", { requestedBy: "window" });
 		assert.deepEqual(refusedRes.details, { ok: false });
+	});
+
+	// plan 011 part 2: createTeacherTools suggest_break carries oneMoreQuestion for window and refuses learner with R5
+	it("passes oneMoreQuestion through createTeacherTools suggest_break and enforces R5", async () => {
+		const activityEnd = T0 + 28 * MINUTE_MS + 1;
+		const messages: LhMessage[] = [
+			userMsg("u1", T0),
+			newBreakNoteMessage("window", "[Session note] break due", undefined, T0 + 27 * MINUTE_MS),
+			...answeredQuiz("q1", "call_q1", "n1", T0 + 28 * MINUTE_MS),
+		];
+		const chatStore = makeChatStore({
+			id: "chat_1",
+			title: "Test",
+			createdAt: "2026-11-21T00:00:00.000Z",
+			updatedAt: "2026-11-21T00:00:00.000Z",
+			messages,
+		});
+		const jobStore = {} as unknown as JobStore;
+		const tools = createTeacherTools({
+			chatId: "chat_1",
+			chatStore,
+			jobStore,
+			spawn: () => {},
+			breaks: () => ({ enabled: true, intervalMinutes: 30, lengthMinutes: 7, resetMinutes: 7 }),
+			now: () => activityEnd + 6 * MINUTE_MS,
+		});
+
+		const okRes = await tools.suggest_break!.execute("call_sb_om", { requestedBy: "window", oneMoreQuestion: true });
+		assert.deepEqual(okRes.details, { ok: true, requestedBy: "window", oneMoreQuestion: true });
+
+		const r5Res = await tools.suggest_break!.execute("call_sb_r5", { requestedBy: "learner", oneMoreQuestion: true });
+		assert.deepEqual(r5Res.details, { ok: false });
+		assert.equal(
+			r5Res.content[0]?.type === "text" ? r5Res.content[0].text : "",
+			'oneMoreQuestion only goes with requestedBy "window".',
+		);
 	});
 });
 

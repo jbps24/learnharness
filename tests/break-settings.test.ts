@@ -129,39 +129,36 @@ describe("resolveSettings breaks", () => {
 describe("breakTimings", () => {
 	const MIN = 60_000;
 
-	// plan 002 part 1: breakTimings({ intervalMinutes: 45, lengthMinutes: 10 }) gives lead 5, escalate 20, reoffer 20 (min); lengthMs = 600 000 at 10
+	// plan 011 part 1: breakTimings sets leadMs = 0, reofferMs = 20 min, and removes escalateMs
 	it("computes timings at default 45/10", () => {
 		assert.deepEqual(breakTimings({ intervalMinutes: 45, lengthMinutes: 10, resetMinutes: 10 }), {
 			intervalMs: 45 * MIN,
 			lengthMs: 600_000,
 			resetMs: 10 * MIN,
-			leadMs: 5 * MIN,
-			escalateMs: 20 * MIN,
+			leadMs: 0,
 			reofferMs: 20 * MIN,
 		});
 	});
 
-	// plan 002 part 1: At 20 -> 2/9/9
+	// plan 011 part 1: at interval 20 -> leadMs 0, reofferMs 20 min
 	it("computes timings at minimum interval 20", () => {
 		assert.deepEqual(breakTimings({ intervalMinutes: 20, lengthMinutes: 5, resetMinutes: 5 }), {
 			intervalMs: 20 * MIN,
 			lengthMs: 5 * MIN,
 			resetMs: 5 * MIN,
-			leadMs: 2 * MIN,
-			escalateMs: 9 * MIN,
-			reofferMs: 9 * MIN,
+			leadMs: 0,
+			reofferMs: 20 * MIN,
 		});
 	});
 
-	// plan 002 part 1: At 90 -> 10/40/40
+	// plan 011 part 1: at interval 90 -> leadMs 0, reofferMs 20 min
 	it("computes timings at maximum interval 90", () => {
 		assert.deepEqual(breakTimings({ intervalMinutes: 90, lengthMinutes: 20, resetMinutes: 20 }), {
 			intervalMs: 90 * MIN,
 			lengthMs: 20 * MIN,
 			resetMs: 20 * MIN,
-			leadMs: 10 * MIN,
-			escalateMs: 40 * MIN,
-			reofferMs: 40 * MIN,
+			leadMs: 0,
+			reofferMs: 20 * MIN,
 		});
 	});
 });

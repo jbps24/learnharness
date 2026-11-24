@@ -141,7 +141,7 @@ function lastSuccessfulPlanInit(parts: LhViewPart[]): number {
 }
 
 /** The units of the newest plan tree any plan tool result carries. */
-function latestPlanUnits(messages: readonly LhMessage[]): PlanUnit[] | undefined {
+export function latestPlanUnits(messages: readonly LhMessage[]): PlanUnit[] | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const m = messages[i]!;
 		if (m.role !== "toolResult" || !m.toolName.startsWith("plan_")) continue;
@@ -223,6 +223,7 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 				parts: [
 					{
 						type: "data-unit-cut",
+							sourceMessageId: m.id,
 						id: `uc_${record.id}`,
 						data: {
 							unitIndex: at >= 0 ? at + 1 : finishedUnitIds.length + 1,
@@ -240,6 +241,7 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 				parts: [
 					{
 						type: "data-compaction-cut",
+							sourceMessageId: m.id,
 						id: `cc_${compaction.id}`,
 						data: { content: compaction.content, details: compaction.details },
 					},
@@ -254,12 +256,15 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 				if (block.type === "image") return [{ ...block as ImageContent }];
 				return [];
 			});
-			out.push({ id: m.id, role: "user", parts });
+			for (const part of parts) part.sourceMessageId = m.id;
+				out.push({ id: m.id, role: "user", parts });
 			continue;
 		}
 
 		if (role === "custom") {
-			projectMarker(m as LhMarkerMessage, out);
+			const before = out.length;
+				projectMarker(m as LhMarkerMessage, out);
+				for (const row of out.slice(before)) for (const part of row.parts) part.sourceMessageId = m.id;
 			continue;
 		}
 
@@ -267,7 +272,7 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 			if ((m as ToolResultMessage).toolName === "suggest_break") {
 				// Plan 002 part 6: an ok call projects one divider; a refused one nothing.
 				const data = breakPartData(messages, messages.indexOf(m));
-				if (data) out.push({ id: m.id, role: "user", parts: [{ type: "data-break", id: `br_${data.toolCallId}`, data }] });
+				if (data) out.push({ id: m.id, role: "user", parts: [{ type: "data-break", sourceMessageId: m.id, id: `br_${data.toolCallId}`, data }] });
 				continue;
 			}
 			applyResultTo(findToolPart(m as LhMessage & ToolResultMessage), m as ToolResultMessage);
@@ -314,10 +319,8 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 					const part = toolPartOf(block, live, streamingMessage);
 					const pluginProblem = pluginProblemForCall(messages, { messageId: m.id, contentIndex, toolCallId: block.id, toolName: block.name });
 					if (pluginProblem) { part.pluginProblem = pluginProblem; part.input = pluginProblem.input; }
-					if ((QUESTION_TOOLS as readonly string[]).includes(block.name)) {
-						part.sourceMessageId = m.id;
-						part.sourceContentIndex = contentIndex;
-					}
+					part.sourceMessageId = m.id;
+					part.sourceContentIndex = contentIndex;
 					if (block.name === SEND_TO_USER_TOOL) {
 						// Failed/aborted generations never execute their calls;
 						// the provider error/abort UI already owns that outcome.
@@ -347,6 +350,7 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 				}
 			}
 			const parts: LhViewPart[] = [...reasoning, ...rest];
+				for (const part of parts) part.sourceMessageId ??= m.id;
 			if (parts.length === 0) {
 				// An arrived-but-silent STREAMING message (owner, optimistic
 				// round 3, 2026-10-02): the turn's first applied event can
@@ -357,7 +361,7 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 				// seamless and the two can never double). Settled empty
 				// messages stay hidden (presentation-only).
 				if (live?.streamingIds.has(m.id)) {
-					parts.push({ type: "reasoning", id: `${m.id}-r0`, text: "", state: "done" });
+					parts.push({ type: "reasoning", id: `${m.id}-r0`, text: "", state: "done", sourceMessageId: m.id });
 				} else {
 					continue;
 				}
@@ -379,6 +383,21 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 const isOkBreakResult = (m: LhMessage): boolean =>
 	m.role === "toolResult" && m.toolName === "suggest_break" && !m.isError && (m.details as { ok?: boolean } | null)?.ok !== false;
 
+function hasOneMoreQuestion(messages: readonly LhMessage[], index: number, toolCallId: string): boolean {
+	if (((messages[index] as ToolResultMessage).details as { oneMoreQuestion?: unknown } | null)?.oneMoreQuestion === true) return true;
+	for (let i = index - 1; i >= 0; i--) {
+		const m = messages[i]!;
+		if (m.role !== "assistant") continue;
+		for (let c = m.content.length - 1; c >= 0; c--) {
+			const block = m.content[c]!;
+			if (block.type === "toolCall" && block.id === toolCallId && block.name === "suggest_break") {
+				return (block.arguments as { oneMoreQuestion?: unknown } | null)?.oneMoreQuestion === true;
+			}
+		}
+	}
+	return false;
+}
+
 /** The `data-break` payload of the suggest_break result at `index`, read from
  *  breakState as of just before the next ok suggestion; null when refused. */
 function breakPartData(messages: readonly LhMessage[], index: number): Record<string, unknown> | null {
@@ -394,6 +413,7 @@ function breakPartData(messages: readonly LhMessage[], index: number): Record<st
 	if (s.takenAt !== undefined) data.takenAt = s.takenAt;
 	if (s.lengthMinutes !== undefined) data.lengthMinutes = s.lengthMinutes;
 	if (s.breakMs !== undefined) data.breakMs = s.breakMs;
+	if (hasOneMoreQuestion(messages, index, s.toolCallId)) data.oneMoreQuestion = true;
 	return data;
 }
 
@@ -613,7 +633,7 @@ function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[]): void {
 			const idx = lastSuccessfulPlanInit(group.parts);
 			if (idx === -1) return;
 			const { block } = marker.details as { planCallId: string; block: PlanBlockData };
-			group.parts.splice(idx + 1, 0, { type: "data-plan-block", id: marker.id, data: block });
+			group.parts.splice(idx + 1, 0, { type: "data-plan-block", sourceMessageId: marker.id, id: marker.id, data: block });
 			return;
 		}
 	}

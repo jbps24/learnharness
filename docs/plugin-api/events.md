@@ -63,6 +63,9 @@ export interface ServerEvents {
     "side-chats-changed": {
         chatId: string;
     };
+    "course-material-changed": {
+        chatId: string;
+    };
     "plugins-changed": Record<string, never>;
     "plugin-message": {
         pluginId: string;
@@ -92,6 +95,8 @@ export interface ServerEvents {
 - ["compaction-changed".unit](#serverevents-compaction-changedunit)
 - ["side-chats-changed"](#serverevents-side-chats-changed)
 - ["side-chats-changed".chatId](#serverevents-side-chats-changedchatid)
+- ["course-material-changed"](#serverevents-course-material-changed)
+- ["course-material-changed".chatId](#serverevents-course-material-changedchatid)
 - ["plugins-changed"](#serverevents-plugins-changed)
 - ["plugin-message"](#serverevents-plugin-message)
 - ["plugin-message".pluginId](#serverevents-plugin-messagepluginid)
@@ -243,6 +248,22 @@ GET /api/chats/:id/side-chats. Closing never deletes it.
 ```
 
 ### ServerEvents "side-chats-changed".chatId
+
+```ts
+chatId: string;
+```
+
+### ServerEvents "course-material-changed"
+
+A chat's course files, methods or conflicts changed.
+
+```ts
+"course-material-changed": {
+    chatId: string;
+};
+```
+
+### ServerEvents "course-material-changed".chatId
 
 ```ts
 chatId: string;

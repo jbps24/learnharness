@@ -21,9 +21,12 @@ test("user image parts preserve native ordering, legacy text and paths without i
 	assert.equal(nativeInlineImageContent("./diagram.png"), "./diagram.png");
 	assert.equal(nativeInlineImageContent("legacy", []), "legacy");
 	const message = newUserMessage("./diagram.png", [answerImage]);
-	assert.deepEqual(projectView([message])[0]!.parts, [{ type: "text", text: "./diagram.png", state: "done" }, answerImage]);
-	assert.deepEqual(projectView([newUserMessage("", [answerImage])])[0]!.parts, [answerImage]);
-	assert.deepEqual(projectView([newUserMessage("legacy")])[0]!.parts, [{ type: "text", text: "legacy", state: "done" }]);
+	const sourceMessageId = message.id;
+	assert.deepEqual(projectView([message])[0]!.parts, [{ type: "text", text: "./diagram.png", state: "done", sourceMessageId }, { ...answerImage, sourceMessageId }]);
+	const imageOnly = newUserMessage("", [answerImage]);
+	assert.deepEqual(projectView([imageOnly])[0]!.parts, [{ ...answerImage, sourceMessageId: imageOnly.id }]);
+	const legacy = newUserMessage("legacy");
+	assert.deepEqual(projectView([legacy])[0]!.parts, [{ type: "text", text: "legacy", state: "done", sourceMessageId: legacy.id }]);
 });
 
 test("practice thinking images persist in marker details and reach both UI and model", () => {

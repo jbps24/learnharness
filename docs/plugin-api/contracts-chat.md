@@ -13,6 +13,7 @@
 - [ExtractionRunUsage](#extractionrunusage) — supporting declaration
 - [ExtractionStageUsage](#extractionstageusage) — supporting declaration
 - [ImageSnapshot](#imagesnapshot) — supporting declaration
+- [RetiredReply](#retiredreply) — supporting declaration
 - [SideChatAnchor](#sidechatanchor) — supporting declaration
 - [SideChatMessage](#sidechatmessage) — supporting declaration
 - [SideChatThread](#sidechatthread) — supporting declaration
@@ -173,11 +174,13 @@ export interface ChatRecord {
     extractions?: ExtractionRunUsage[];
     settings?: ChatSettings;
     sideChats?: SideChatThread[];
+    courseMaterial?: CourseMaterial;
+    retiredReplies?: RetiredReply[];
     version?: number;
 }
 ```
 
-**Related types:** [ChatKind](contracts-chat.md#chatkind), [ChatSettings](contracts-chat.md#chatsettings), [ExtractionRunUsage](contracts-chat.md#extractionrunusage), [ImageSnapshot](contracts-chat.md#imagesnapshot), [LhMessage](native-messages.md#lhmessage), [PlanTree](contracts-plan.md#plantree), [SideChatThread](contracts-chat.md#sidechatthread), [TurnUsage](contracts-chat.md#turnusage).
+**Related types:** [ChatKind](contracts-chat.md#chatkind), [ChatSettings](contracts-chat.md#chatsettings), [CourseMaterial](contracts-course.md#coursematerial), [ExtractionRunUsage](contracts-chat.md#extractionrunusage), [ImageSnapshot](contracts-chat.md#imagesnapshot), [LhMessage](native-messages.md#lhmessage), [PlanTree](contracts-plan.md#plantree), [RetiredReply](contracts-chat.md#retiredreply), [SideChatThread](contracts-chat.md#sidechatthread), [TurnUsage](contracts-chat.md#turnusage).
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
@@ -193,6 +196,8 @@ export interface ChatRecord {
 - [extractions](#chatrecord-extractions)
 - [settings](#chatrecord-settings)
 - [sideChats](#chatrecord-sidechats)
+- [courseMaterial](#chatrecord-coursematerial)
+- [retiredReplies](#chatrecord-retiredreplies)
 - [version](#chatrecord-version)
 
 ### ChatRecord id
@@ -285,6 +290,22 @@ all threads; already-recorded teacher history is never rewritten.
 
 ```ts
 sideChats?: SideChatThread[];
+```
+
+### ChatRecord courseMaterial
+
+Course files, extracted node methods and unresolved route conflicts.
+
+```ts
+courseMaterial?: CourseMaterial;
+```
+
+### ChatRecord retiredReplies
+
+Replies replaced by Retry, kept for diagnosis, never shown and never sent to a model.
+
+```ts
+retiredReplies?: RetiredReply[];
 ```
 
 ### ChatRecord version
@@ -633,6 +654,38 @@ width: number;
 
 ```ts
 height: number;
+```
+
+## RetiredReply
+
+Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
+
+Replies replaced by Retry, kept for diagnosis, never shown and never sent to a model.
+
+```ts
+export interface RetiredReply {
+    at: string;
+    messages: LhMessage[];
+}
+```
+
+**Related types:** [LhMessage](native-messages.md#lhmessage).
+
+**Member index** (including nested object members; inherited members are defined in the linked base types):
+
+- [at](#retiredreply-at)
+- [messages](#retiredreply-messages)
+
+### RetiredReply at
+
+```ts
+at: string;
+```
+
+### RetiredReply messages
+
+```ts
+messages: LhMessage[];
 ```
 
 ## SideChatAnchor

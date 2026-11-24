@@ -76,7 +76,12 @@ export function ThinkingBlock({
 	dataCommit,
 	defaultOpen = false,
 	inCard = false,
+	findKey,
+	findField,
 }: {
+	/** Find (plan 003 part 5): `lh:find-reveal` for this key and field opens the block. */
+	findKey?: string;
+	findField?: string;
 	label?: string;
 	text: string;
 	images?: readonly Readonly<ImageContent>[];
@@ -95,6 +100,15 @@ export function ThinkingBlock({
 		() => subscribeUserThinking((o) => { syncedRef.current = true; setOpen(o); }),
 		[],
 	);
+	useEffect(() => {
+		if (!findKey || !findField) return;
+		const onReveal = (event: Event) => {
+			const detail = (event as CustomEvent<{ key?: string; field?: string }>).detail;
+			if (detail?.key === findKey && detail.field === findField) setOpen(true);
+		};
+		window.addEventListener("lh:find-reveal", onReveal);
+		return () => window.removeEventListener("lh:find-reveal", onReveal);
+	}, [findKey, findField]);
 	return (
 		/* The rail GROUPS and the rail IS THE MISSING CHARACTER (owner
 		   rounds, 2026-10-05): the heading sits INSIDE the rail, and the

@@ -23,6 +23,10 @@ _Avoid_: Course record, compaction summary, ChatRecord
 A model-written summary that stands in for the older stretch of the current unit when its context grows too large. It never rewrites the lesson record.
 _Avoid_: Lesson record
 
+**Retry a reply**:
+The learner asks for the latest teacher reply to be written again. Only a reply to a learner input that did nothing lasting (text, read-only lookups, questions for the learner) can be retried. The old reply is kept on disk but hidden from the chat and from every model, and the turn runs again from the same input on the chat's current model.
+_Avoid_: Regenerate, redo
+
 **Node status**:
 Where the teacher has been on the plan, not what the learner has mastered: upcoming, current (the teacher's most recent teaching call was about this node), or visited (the teacher has taught it and moved on).
 _Avoid_: Done, mastered, completed
@@ -32,7 +36,7 @@ The time a learner has spent in a teaching lesson since the clock last reset, co
 _Avoid_: Session time, screen time
 
 **Break interval**:
-The learning time around which a break is aimed: 45 minutes unless the learner changes it. The break window opens shortly before it, so breaks land around it rather than always after.
+The learning time at which a break is due: 45 minutes unless the learner changes it. The break window opens when learning time reaches it.
 _Avoid_: Break timer
 
 **Break length**:
@@ -43,20 +47,48 @@ _Avoid_: Break duration, pause length
 The gap without learner activity after which the learning clock restarts and the learner counts as away: 15 minutes unless the learner changes it. A learner-triggered answer still running counts as activity; the gap starts when it ends.
 
 **Break window**:
-The stretch of a teaching lesson in which a break is due: the app opens it shortly before learning time reaches the break interval, and it closes when the teacher makes a break suggestion or the learning clock resets.
+The stretch of a teaching lesson in which a break is due: the app opens it when learning time reaches the break interval, and it closes when the teacher makes a break suggestion or the learning clock resets.
 _Avoid_: Break timer, pause window
 
 **Break suggestion**:
-The teacher's offer of a short break, made at a closed point it picks inside a break window, or at any time the learner asks for a break. It is never forced.
+The teacher's offer of a short break, made in the next teacher turn once a break window is open, mid-node included, or at any time the learner asks for a break. It is never forced.
 _Avoid_: Forced pause, break prompt
 
+**One-more-question offer**:
+A break suggestion that first offers the one question left to close the node. Skip then reads "Answer it first": the teacher poses that question, and the break window comes back with the answer to it.
+_Avoid_: Last question prompt
+
 **Closed point**:
-A moment in the teaching phase where the material just taught is closed, so a break doesn't split it. A unit end is the last node of a unit closed, before the teacher moves into the next unit; a node end is a node's check answered correctly with no repair pending, before the teacher moves on. A unit end is preferred; never mid-step or during a repair.
+A moment in the teaching phase where the material just taught is closed: a unit end is the last node of a unit closed, before the teacher moves into the next unit; a node end is a node's check answered correctly with no repair pending. It is no longer a break rule; breaks do not wait for it.
 _Avoid_: Closed block, stopping point, breakpoint
 
 **Find**:
 Looking up a phrase in the open session, the whole of it whether shown yet or not: what the learner and teacher said, the cards (questions, answers, problems, solutions, plan) and side chats, as the learner reads them. It never finds what hasn't been revealed to the learner yet, nor the teacher's thinking.
 _Avoid_: Search, session search
+
+**Course file**:
+A local file the learner attached or named, or the tutor read, that joins the session automatically. While its binding tick is on, the course methods it supplies bind the tutor.
+_Avoid_: Source (that is the knowledge-graph import), attachment
+
+**Course method**:
+The route and notation a course file uses for one plan node. The tutor teaches, checks and grades by it, and gives another route only when the learner asks, labelled as not from their course.
+_Avoid_: Solution method, approach
+
+**Route conflict**:
+Two course files describing different routes for one plan node. The tutor asks the learner which route their course uses, and the answer is stored on the node.
+_Avoid_: Disagreement, clash
+
+**Exam file**:
+A course file that is a past exam of the course (Altklausur). It shapes practice problems; it never supplies a course method.
+_Avoid_: Old exam, test file
+
+**Exam pattern**:
+What one exam task asks about one plan node: task type, givens, what is asked, answer format, typical numbers, points, its source task. When the file has a solution, also how points are given.
+_Avoid_: Exam question, template
+
+**Course-method note**:
+The wire-only note that tells the tutor the course methods for a node (or the unresolved conflict). It is sent again when the node's methods change or a lesson-record cut drops it.
+_Avoid_: Method hint
 
 **Learner input**:
 Anything the learner contributes to a session: a typed message, an answer to a question or check, an explain-back, a practice submission, a plugin answer, or a steer.

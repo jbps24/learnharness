@@ -40,10 +40,20 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
  * client — the card reveals his answer, the committed correct answer, and
  * the explanation, with NO verdict chips (owner ruling 2026-09-27).
  */
-export function AnsweredCard({ answer: savedAnswer, input, toolCallId }: { answer: QuestionAnswerData; input?: unknown; toolCallId?: string }) {
+export function AnsweredCard({ answer: savedAnswer, input, toolCallId, findKey }: { answer: QuestionAnswerData; input?: unknown; toolCallId?: string; findKey?: string }) {
 	const answer = answerForPresentation(savedAnswer, input);
 	const optionLetters = answeredOptionLetters(savedAnswer, input);
 	const [whyOpen, setWhyOpen] = useState(false); // the tucked explanation (predictions, owner 2026-10-03)
+	// Find (plan 003 part 5): a hit inside the tucked explanation opens it and it stays open.
+	useEffect(() => {
+		if (!findKey) return;
+		const onReveal = (event: Event) => {
+			const detail = (event as CustomEvent<{ key?: string; field?: string }>).detail;
+			if (detail?.key === findKey && detail.field === "explanation") setWhyOpen(true);
+		};
+		window.addEventListener("lh:find-reveal", onReveal);
+		return () => window.removeEventListener("lh:find-reveal", onReveal);
+	}, [findKey]);
 
 	// ADAPT QUESTION LAYOUT on the record (owner, session-appearance-layout):
 	// an answered question gets two columns exactly when its question card
@@ -163,6 +173,7 @@ export function AnsweredCard({ answer: savedAnswer, input, toolCallId }: { answe
 			ref={cardRef}
 			className="rounded-xl border bg-card p-4 text-card-foreground [&>*:last-child]:mb-0"
 			data-testid="answered-card"
+			data-find-part={findKey}
 			data-question-layout={columns ? "columns" : "stacked"}
 		>
 			{/* Two columns (Adapt question layout): question left; options,
@@ -294,6 +305,8 @@ export function AnsweredCard({ answer: savedAnswer, input, toolCallId }: { answe
 				    the accent lift read too light); rail only, heights identical. */
 				<ThinkingBlock
 					testId="your-thinking"
+					findKey={findKey}
+					findField="thinking"
 					label="YOUR THINKING"
 					text={answer.thinking ?? answer.note ?? ""}
 					images={answer.images?.thinking}

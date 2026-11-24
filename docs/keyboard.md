@@ -136,13 +136,17 @@ submission conventions above.
   the walk. Menus without a search field instead move button focus with wrapping
   **↑/↓**, support **Home/End**, and use native **Enter** activation.
 - **Find (Mod+F):** in the graph, focuses node search; with the chains view
-  open, focuses that view's search instead. In a session, opens a
-  literal, case-insensitive search of displayed session text, including offscreen
-  scroll content but excluding hidden/collapsed content, draft fields, and embedded
-  documents. **Enter / Shift+Enter** in the Find field move to the next/previous
-  match with wrap. **Esc** closes Find, clears highlights, and restores prior
-  focus. Reopening retains the query and reading position within that session;
-  changing sessions resets Find. A foreground menu/dialog takes priority.
+  open, focuses that view's search instead. In a session, opens the Find
+  dropdown under the header's search icon (a second Mod+F focuses and selects
+  the query). It searches the whole session, drawn or not (learner messages,
+  teacher prose, cards, side chats; never text not yet revealed), case- and
+  accent-insensitively, a multi-word query as an exact phrase. Hits are listed
+  newest first. **↓ / Enter** in the field select the next (older) hit,
+  **↑ / Shift+Enter** the previous (toward the newest), both with wrap; a hit
+  in the earlier history draws it first. **Esc**, **×** or the icon close Find,
+  clear highlights, leave the transcript where it is, and restore prior focus.
+  Reopening retains the query and selected hit within that session; changing
+  sessions resets Find. A foreground menu/dialog takes priority.
 
 ## Maintainer entry points
 

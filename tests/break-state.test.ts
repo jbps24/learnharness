@@ -18,9 +18,9 @@ const DAY = 24 * 60 * MIN;
 const TIMINGS = breakTimings({ intervalMinutes: 45, lengthMinutes: 10, resetMinutes: 10 });
 
 const WINDOW_TEXT =
-	'[Session note] The learner has been learning for about 45 minutes. At the next closed point, suggest a short break: say so in one line, then call suggest_break with requestedBy "window" and end your turn. A closed point is a node end (its check answered correctly, no repair pending) or, better, a unit end; if the current node is the last of its unit, wait for the unit end. Never break mid-step or during a repair.';
+	'[Session note] The learner has been learning for about 45 minutes. In this turn, respond to their input in one line, then suggest a short break instead of going on: say so in one line, call suggest_break with requestedBy "window" and end your turn. Mid-node is fine. If exactly one question remains until the current node is closed, you may instead offer it first: say in one line that one question would close the node and ask whether they want to answer it before the break, then call suggest_break with requestedBy "window" and oneMoreQuestion true.';
 const ESCALATION_TEXT =
-	"[Session note] A break is overdue. Suggest it at the very next closed point, a node end included; don't hold out for the unit end.";
+	"[Session note] A break is overdue. In this turn, respond to the learner's input in one line, then suggest the break.";
 
 const userAt = (id: string, timestamp: number): LhMessage => ({
 	...newUserMessage(`u_${id}`),
@@ -119,14 +119,14 @@ describe("breakCountdown", () => {
 });
 
 describe("breakState", () => {
-	// plan 002 part 2: no window before 40 min; nextOpenAtMs is intervalMs - leadMs
-	it("has no window before 40 min and nextOpenAtMs 40 min when enabled", () => {
+	// plan 011 part 1: no window before 45 min; nextOpenAtMs is intervalMs
+	it("has no window before 45 min and nextOpenAtMs 45 min when enabled", () => {
 		const msgs = ticks(32, 0);
-		const state = breakState(msgs, undefined, TIMINGS, true, 39 * MIN);
+		const state = breakState(msgs, undefined, TIMINGS, true, 44 * MIN);
 		assert.equal(state.window, null);
 		assert.equal(state.latest, null);
 		assert.equal(state.skipsInRow, 0);
-		assert.equal(state.nextOpenAtMs, 40 * MIN);
+		assert.equal(state.nextOpenAtMs, 45 * MIN);
 
 		// plan 002 part 2: nextOpenAtMs is null when enabled is false
 		const disabled = breakState(msgs, undefined, TIMINGS, false, 39 * MIN);
@@ -142,6 +142,7 @@ describe("breakState", () => {
 			openedAtMs: 41 * MIN,
 			escalated: false,
 			noteInContext: true,
+			answeredSince: false,
 		});
 
 		const closed = breakState(
@@ -220,7 +221,7 @@ describe("breakState", () => {
 		assert.equal(ended.latest?.outcome, "ended");
 		assert.equal(ended.latest?.breakMs, 10 * MIN);
 		assert.equal(ended.skipsInRow, 0);
-		assert.equal(ended.nextOpenAtMs, 40 * MIN);
+		assert.equal(ended.nextOpenAtMs, 45 * MIN);
 	});
 
 	// plan 002 part 2: break-skipped or later main-transcript learner action without Take -> skipped
@@ -244,7 +245,7 @@ describe("breakState", () => {
 		assert.equal(state.latest?.outcome, "pending");
 	});
 
-	// plan 002 part 2: skipsInRow counts window-requested skips only; a learner-requested skip leaves nextOpenAtMs at intervalMs - leadMs
+	// plan 011 part 1: skipsInRow counts window-requested skips only; a learner-requested skip leaves nextOpenAtMs at intervalMs
 	it("does not count a skipped learner-requested suggestion", () => {
 		const msgs: LhMessage[] = [
 			...ticks(8, 0),
@@ -254,11 +255,11 @@ describe("breakState", () => {
 		const state = breakState(msgs, undefined, TIMINGS, true, 11 * MIN);
 		assert.equal(state.latest?.outcome, "skipped");
 		assert.equal(state.skipsInRow, 0);
-		assert.equal(state.nextOpenAtMs, 40 * MIN);
+		assert.equal(state.nextOpenAtMs, 45 * MIN);
 	});
 
-	// plan 002 part 2: one skip at 46 -> nextOpenAtMs 66 min; two skips -> nextOpenAtMs null
-	it("sets nextOpenAtMs to 66 min after one skip at 46 min and null after two skips", () => {
+	// plan 011 part 1: one skip at 46 -> nextOpenAtMs 66 min; two skips at 68 -> nextOpenAtMs 88 min (never null)
+	it("sets nextOpenAtMs to 66 min after one skip at 46 min and 88 min after two skips", () => {
 		const oneSkip: LhMessage[] = [
 			...ticks(40, 0),
 			newBreakNoteMessage("window", WINDOW_TEXT, undefined, 41 * MIN),
@@ -278,7 +279,7 @@ describe("breakState", () => {
 		];
 		const s2 = breakState(twoSkips, undefined, TIMINGS, true, 69 * MIN);
 		assert.equal(s2.skipsInRow, 2);
-		assert.equal(s2.nextOpenAtMs, null);
+		assert.equal(s2.nextOpenAtMs, 88 * MIN);
 	});
 
 	// plan 002 part 2: escalated is true when a kind "escalation" note exists for the window
@@ -365,17 +366,17 @@ describe("breakNotesFor", () => {
 		assert.equal(kindOf(awayDisabled[0]), "away");
 	});
 
-	// plan 002 part 2: window note emitted once across two inputs with exact text
-	it("emits window note once across two inputs with exact confirmed text", () => {
-		const msgs = [...probeDoneMessages(0), ...ticks(40)];
-		const first = breakNotesFor(msgs, undefined, TIMINGS, true, 40 * MIN);
+	// plan 011 part 1: window note emitted once at intervalMs across two inputs with exact text
+	it("emits window note once at 45 min across two inputs with exact confirmed text", () => {
+		const msgs = [...probeDoneMessages(0), ...ticks(45)];
+		const first = breakNotesFor(msgs, undefined, TIMINGS, true, 45 * MIN);
 		assert.equal(first.length, 1);
 		assert.equal(first[0]?.customType, "break-note");
 		assert.equal(first[0]?.content, WINDOW_TEXT);
 		assert.deepEqual(first[0]?.details, { kind: "window", windowId: first[0]?.id });
 
-		const sent = newBreakNoteMessage("window", WINDOW_TEXT, undefined, 40 * MIN);
-		const second = breakNotesFor([...msgs, sent, userAt("u3", 45 * MIN)], undefined, TIMINGS, true, 46 * MIN);
+		const sent = newBreakNoteMessage("window", WINDOW_TEXT, undefined, 45 * MIN);
+		const second = breakNotesFor([...msgs, sent], undefined, TIMINGS, true, 46 * MIN);
 		assert.deepEqual(second, []);
 	});
 
@@ -388,26 +389,27 @@ describe("breakNotesFor", () => {
 		assert.deepEqual(breakNotesFor(taken, undefined, TIMINGS, true, 42 * MIN), []);
 	});
 
-	// plan 002 part 2: escalation at opened + 20 and only once with exact text
-	it("emits escalation note at openedAtMs + 20 min and only once", () => {
-		const note = newBreakNoteMessage("window", WINDOW_TEXT, undefined, 41 * MIN);
-		const msgs = [...probeDoneMessages(0), ...ticks(40), note, ...ticks(56, 48)];
-		assert.deepEqual(breakNotesFor(msgs, undefined, TIMINGS, true, 60 * MIN), []);
+	// plan 011 part 1: escalation on first learner input after window note (answeredSince) and only once with exact text
+	it("emits escalation note when answeredSince is true and only once", () => {
+		const note = newBreakNoteMessage("window", WINDOW_TEXT, undefined, 45 * MIN);
+		const beforeAnswer = [...probeDoneMessages(0), ...ticks(45), note];
+		assert.deepEqual(breakNotesFor(beforeAnswer, undefined, TIMINGS, true, 46 * MIN), []);
 
-		const esc = breakNotesFor(msgs, undefined, TIMINGS, true, 61 * MIN);
+		const afterAnswer = [...beforeAnswer, userAt("u2", 48 * MIN)];
+		const esc = breakNotesFor(afterAnswer, undefined, TIMINGS, true, 48 * MIN);
 		assert.equal(esc.length, 1);
 		assert.equal(esc[0]?.content, ESCALATION_TEXT);
 		assert.deepEqual(esc[0]?.details, { kind: "escalation", windowId: note.id });
 
-		const sent = newBreakNoteMessage("escalation", ESCALATION_TEXT, note.id, 61 * MIN);
-		const afterEsc = breakNotesFor([...msgs, sent, userAt("u3", 62 * MIN)], undefined, TIMINGS, true, 63 * MIN);
+		const sent = newBreakNoteMessage("escalation", ESCALATION_TEXT, note.id, 48 * MIN);
+		const afterEsc = breakNotesFor([...afterAnswer, sent, userAt("u3", 50 * MIN)], undefined, TIMINGS, true, 50 * MIN);
 		assert.deepEqual(afterEsc, []);
 	});
 
 	// plan 002 part 2: re-send window note with same text and windowId when noteInContext is false
 	it("re-sends window note after a context cut", () => {
 		const note = newBreakNoteMessage("window", WINDOW_TEXT, undefined, 41 * MIN);
-		const kept = userAt("u_kept", 42 * MIN);
+		const kept = { id: "a_kept", role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop", timestamp: 42 * MIN } as unknown as LhMessage;
 		const rec = lessonRecordMarker("lr_1", kept.id, 43 * MIN);
 		const msgs = [...probeDoneMessages(0), ...ticks(40), note, kept, rec];
 		const notes = breakNotesFor(msgs, undefined, TIMINGS, true, 44 * MIN);

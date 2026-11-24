@@ -66,6 +66,7 @@ import {
 	type JobRecord,
 	type SteerMessage,
 } from "../core/contracts.ts";
+import { emit } from "../core/events.ts";
 import type { TurnInput, UserSteerInput } from "../core/input-events.ts";
 import { hasUnresolvedQuestion, endsInDismissal, endsInQuestionRecovery, newUserSteer, type LhMessage } from "../core/native-messages.ts";
 import { prepareSubmissionImages, submissionImagePolicyKey } from "./submission-images.ts";
@@ -452,6 +453,16 @@ export function abortJob(jobId: string): AbortOutcome {
 		return { ok: false, reason: "not_running" };
 	}
 
+	if (job.toolCallId?.startsWith("course-assign:")) {
+		stores.jobStore.updateJob(jobId, {
+			status: "error",
+			error: "Assignment was interrupted.",
+			activity: "aborted",
+		});
+		fireJobAbort(jobId);
+		return { ok: true };
+	}
+
 	stores.jobStore.updateJob(jobId, {
 		status: "error", error: "Aborted by learner", activity: "aborted",
 		delivery: { kind: "abort", status: "pending" },
@@ -764,6 +775,27 @@ export function recoverStaleJobs(): void {
 		for (const chat of stores.chatStore.listChats()) {
 			for (const job of stores.jobStore.listJobs(chat.id)) {
 				if (isJobLive(job.id)) continue; // never re-run beside live computation
+				if (job.toolCallId?.startsWith("course-assign:")) {
+					if (job.status === "running") {
+						stores.jobStore.updateJob(job.id, {
+							status: "error",
+							error: "Assignment was interrupted.",
+							activity: "failed",
+						});
+						const filePath = (job.input as { path?: unknown } | undefined)?.path;
+						const material = typeof filePath === "string" ? stores.chatStore.getChat(job.chatId)?.courseMaterial : undefined;
+						if (typeof filePath === "string" && material?.files.some((file) => file.path === filePath && file.status === "assigning")) {
+							const files = material.files.map((file) => {
+								if (file.path !== filePath || file.status !== "assigning") return file;
+								const { error: _error, ...rest } = file;
+								return { ...rest, status: "failed" as const, error: "Assignment was interrupted." };
+							});
+							stores.chatStore.setCourseMaterial(job.chatId, { ...material, files });
+							emit("course-material-changed", { chatId: job.chatId });
+						}
+					}
+					continue;
+				}
 				if (!stores.chatStore.getChat(job.chatId)) continue;
 				if (isTurnRunning(job.chatId)) continue;
 				const recovered = normalizeLegacyResult(job);

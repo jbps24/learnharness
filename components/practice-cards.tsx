@@ -94,6 +94,19 @@ const OUTCOME_COLOR: Record<string, string | undefined> = {
 	surrendered: "var(--lh-error)",
 };
 
+function hasMetadata(
+	concludeInput: { outcome?: string; rung?: unknown; missClass?: unknown; retest?: unknown },
+	problemInput: { mode?: unknown; target?: unknown },
+): boolean {
+	return (
+		(typeof problemInput.mode === "string" && problemInput.mode !== "") ||
+		(Array.isArray(problemInput.target) && problemInput.target.some((t) => typeof t === "string")) ||
+		(typeof concludeInput.rung === "string" && concludeInput.rung !== "") ||
+		(typeof concludeInput.missClass === "string" && concludeInput.missClass !== "") ||
+		typeof concludeInput.retest === "boolean"
+	);
+}
+
 export function ConcludeCard({ part }: ArtifactPartProps) {
 	// The conclusion redesigned (owner round, 2026-10-05): the SOLUTION is
 	// the hero — the modelSolution committed at pose time (part.reveal, the
@@ -148,10 +161,13 @@ export function ConcludeCard({ part }: ArtifactPartProps) {
 					</div>
 				</>
 			)}
-			<MetadataPopover
-				concludeInput={input}
-				problemInput={(part.problemInput ?? {}) as { mode?: unknown; target?: unknown }}
-			/>
+			{/* Gated here as well as inside: a card with no metadata mounts no popover (and needs no layers provider). */}
+			{hasMetadata(input, (part.problemInput ?? {}) as { mode?: unknown; target?: unknown }) && (
+				<MetadataPopover
+					concludeInput={input}
+					problemInput={(part.problemInput ?? {}) as { mode?: unknown; target?: unknown }}
+				/>
+			)}
 		</div>
 	);
 }

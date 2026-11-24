@@ -58,12 +58,17 @@ import { registerTurn, rememberTurnFailure, unregisterTurn } from "./turn-runs.t
 import { persistTurn, triggerExtraction, TurnPersistenceError } from "./turn-service.ts";
 import { hasProbeDone, hasUnresolvedQuestion, newUnitsNoteMessage, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
 import { breakNotesFor, breakTimings } from "../core/breaks.ts";
+import { courseNotesFor, practiceCourseNotesFor } from "../core/course-notes.ts";
 import { samePluginQuestionOccurrence } from "../core/plugin-questions.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
 import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight, antigravityRequestTrigger, antigravitySummaryFit, antigravityKeptTail, type CompactionDeps } from "./compaction.ts";
 import { COMPACTION_RESERVE_TOKENS } from "../core/compaction.ts";
 import { catalogContextLimits, refreshConnectionCatalog } from "./model-catalog.ts";
 import { emit } from "../core/events.ts";
+import { courseFilesUsed, mergeCourseFiles } from "../core/course-files.ts";
+import { assignmentTargets } from "../core/course-assign.ts";
+import { createCourseAssignWorker } from "../agent/subagents/course-assign.ts";
+import { createCourseAssignQueue } from "./course-assign-queue.ts";
 import { settledTurnResponse } from "./turn-runs.ts";
 import { asAgentMessages, type LhMessage } from "../core/native-messages.ts";
 import { QUESTION_TOOLS } from "../core/pending.ts";
@@ -75,10 +80,13 @@ import {
 	parseChatInput,
 	questionRecoveryAppends,
 	retryDrops,
+	retryableReply,
 	type TurnInput,
 } from "../core/input-events.ts";
 import { steerDelivered } from "../core/contracts.ts";
-import type {CallUsage} from "../core/contracts.ts";
+import type {CallUsage, PlanTree} from "../core/contracts.ts";
+
+const NO_REPLY_TO_RETRY = "There is no reply to retry.";
 
 /**
  * One chat turn over the server-owned native record. Framework-free (plain
@@ -103,6 +111,65 @@ import type {CallUsage} from "../core/contracts.ts";
  * already in progress when the opt-in is switched off. */
 function connectionBackgroundAllowed(provider: string): boolean {
 	return subscriptionBackgroundAllowed(provider) && (![CLAUDE_CODE_PROVIDER, ANTIGRAVITY_PROVIDER].includes(provider) || providerKeyPresent(provider));
+}
+
+const failedCourseScanStart = new Map<string, number>();
+
+/** Plan 007 part 2: keep the session's course files after a turn lands.
+ *  A record with no courseMaterial yet is scanned whole (backfill); later
+ *  turns scan only what this turn added. Never throws: a failure on any turn
+ *  (not only backfill) is logged and retried on the next turn from the
+ *  earliest unscanned message.
+ *  Returns the newly added paths for the assignment queue (part 3). */
+function collectCourseFiles(chatId: string, turnStart: number): string[] {
+	const retryStart = failedCourseScanStart.get(chatId);
+	const scanStart = retryStart !== undefined ? Math.min(retryStart, turnStart) : turnStart;
+	try {
+		const record = stores.chatStore.getChat(chatId);
+		if (!record) {
+			failedCourseScanStart.delete(chatId);
+			return [];
+		}
+		const existing = record.courseMaterial;
+		const scanned = existing ? record.messages.slice(scanStart) : record.messages;
+		const { material, added } = mergeCourseFiles(existing, courseFilesUsed(scanned), new Date().toISOString());
+		if (!existing || added.length > 0) stores.chatStore.setCourseMaterial(chatId, material);
+		failedCourseScanStart.delete(chatId);
+		if (added.length > 0) emit("course-material-changed", { chatId });
+		return added;
+	} catch (err) {
+		failedCourseScanStart.set(chatId, scanStart);
+		console.error(`[chat ${chatId}] course file collection failed:`, err);
+		return [];
+	}
+}
+
+const courseAssignQueue = createCourseAssignQueue({
+	chatStore: stores.chatStore,
+	jobStore: stores.jobStore,
+	worker: createCourseAssignWorker({ engineFor: () => resolveEngine("pdfReader") }),
+	emit,
+});
+
+/** Plan 007 part 3, trigger 1: assign the files a turn just added. */
+export function assignAddedCourseFiles(chatId: string, added: readonly string[]): void {
+	if (added.length === 0) return;
+	const record = stores.chatStore.getChat(chatId);
+	if (!record?.courseMaterial) return;
+	const { targets } = assignmentTargets({ kind: "added", material: record.courseMaterial, added, tree: record.tree });
+	if (targets.length > 0) void courseAssignQueue.enqueue(chatId, targets);
+}
+
+/** Plan 007 part 3, trigger 2/3: a plan_init saved a new tree. */
+function assignAfterPlanInit(chatId: string, previousTree: PlanTree | undefined, nextTree: PlanTree): void {
+	const material = stores.chatStore.getChat(chatId)?.courseMaterial;
+	if (!material) return;
+	const result = assignmentTargets({ kind: "plan_init", material, previousTree, nextTree });
+	if (result.material.methods.length !== material.methods.length || result.material.conflicts.length !== material.conflicts.length) {
+		stores.chatStore.setCourseMaterial(chatId, result.material);
+		emit("course-material-changed", { chatId });
+	}
+	if (result.targets.length > 0) void courseAssignQueue.enqueue(chatId, result.targets);
 }
 
 function settlementErrorText(error: unknown): string {
@@ -299,6 +366,10 @@ export async function handleChatInput(
 		}
 	}
 
+	if (input.type === "retry-reply" && (record.kind === "practice" || !retryableReply(record.messages))) {
+		return Response.json({ error: NO_REPLY_TO_RETRY }, { status: 400 });
+	}
+
 	if (input.type === "retry-question") {
 		try { questionRecoveryAppends(record.messages, input); }
 		catch (err) {
@@ -409,7 +480,7 @@ export async function handleChatInput(
 		const saved = conversation.provider === CLAUDE_CODE_PROVIDER ? stores.chatStore.getChat(chatId)?.messages ?? [] : [];
 		const savedIds = new Set(saved.map((message) => message.id));
 		const reportHistory = saved.length ? [...saved, ...live.filter((message) => !savedIds.has(message.id))] : live;
-		const window = sideContextWindow(reportHistory, conversationEngine.model, contextWindow, input.type === "retry");
+		const window = sideContextWindow(reportHistory, conversationEngine.model, contextWindow, input.type === "retry" || input.type === "retry-reply");
 		const budget = window === undefined ? thresholdTokens : Math.max(1, window - Math.min(COMPACTION_RESERVE_TOKENS, conversationEngine.model.maxTokens));
 		return projectedContextTokens(live, systemPromptTokens, estimateModel) <= budget;
 	};
@@ -446,13 +517,15 @@ export async function handleChatInput(
 						const updates = sideConversationEntries({ messages: current.messages, sideChats: sideContext.snapshot(chatId) });
 						return updates.length ? [...current.messages, ...updates] : current.messages;
 					}
-					const next = input.type === "steers" ? input.steers.filter((entry) => !steerDelivered(current.messages, entry.id)) : inputAppends(current, input);
+					const next = input.type === "steers" ? input.steers.filter((entry) => !steerDelivered(current.messages, entry.id)) : inputAppends(current, input, Date.now(), effective.breaks);
 					const after = [...current.messages, ...next];
 					if (hasUnresolvedQuestion(after)) return current.messages;
 					const updates = sideConversationEntries({ messages: current.messages, sideChats: sideContext.snapshot(chatId) }, after);
 					if (!updates.length) return current.messages;
 					const projected = [...current.messages, ...(input.type === "answer" || input.type === "retry-question" ? [...next, ...updates] : [...updates, ...next])];
-					const omitted = input.type === "retry" ? retryDrops(current.messages) : new Set<string>();
+					const omitted = input.type === "retry" ? retryDrops(current.messages)
+						: input.type === "retry-reply" ? new Set(retryableReply(current.messages) ?? [])
+						: new Set<string>();
 					return projected.filter((message) => !omitted.has(message.id));
 				} catch (error) {
 					if (error instanceof ChatInputError) return current.messages; // normal input validation follows the gate
@@ -510,6 +583,11 @@ export async function handleChatInput(
 			throw err;
 		}
 	}
+	if (input.type === "retry-reply") {
+		const ids = record.kind === "practice" ? null : retryableReply(record.messages);
+		if (!ids) return Response.json({ error: NO_REPLY_TO_RETRY }, { status: 400 });
+		retryOmissions = new Set(ids);
+	}
 
 	// The input's native appends (pure; the honest 400 for an answer with no
 	// pending question call). Computed BEFORE beginTurn so a refused input
@@ -562,7 +640,7 @@ export async function handleChatInput(
 			} else appends = submission.finish({ id: chatId, kind: record.kind, messages: record.messages });
 		} else appends = input.type === "steers"
 			? input.steers.filter((s) => !steerDelivered(record.messages, s.id))
-			: inputAppends(record, input);
+			: inputAppends(record, input, Date.now(), effective.breaks);
 	} catch (err) {
 		if (err instanceof ChatInputError) {
 			return Response.json({ error: err.message }, { status: 400 });
@@ -620,11 +698,14 @@ export async function handleChatInput(
 		&& !record.messages.some((m) => m.role === "custom" && m.customType === "units-note")
 	) appends = [...appends, newUnitsNoteMessage()];
 	// Plan 002 part 4 (choice 8): break notes ride learner inputs of a teaching turn only.
-	if (
-		record.kind !== "practice"
-		&& (input.type === "text" || input.type === "answer" || input.type === "plugin-question-answer"
-			|| input.type === "plugin-problem-submission" || input.type === "thinking")
-	) {
+	const learnerInput = input.type === "text" || input.type === "answer" || input.type === "plugin-question-answer"
+		|| input.type === "plugin-problem-submission" || input.type === "thinking";
+	// Plan 007 part 6: practice turns take the inherited course methods on the same seam.
+	if (record.kind === "practice" && learnerInput) {
+		appends = [...appends, ...practiceCourseNotesFor([...record.messages, ...appends], record.courseMaterial)];
+	}
+	if (record.kind !== "practice" && learnerInput) {
+		if (record.tree) appends = [...appends, ...courseNotesFor([...record.messages, ...appends], record.tree, record.courseMaterial)];
 		appends = [...appends, ...breakNotesFor([...record.messages, ...appends], record.sideChats, breakTimings(effective.breaks), effective.breaks.enabled, Date.now())];
 	}
 	const afterInput = [...record.messages, ...appends];
@@ -643,7 +724,10 @@ export async function handleChatInput(
 	// Only the learner/automatic input is write-ahead. Raw exchanges are
 	// already durable in sideChats; their delivery entries join the SDK
 	// request at its preparation boundary, and publish only if admitted.
-	const merged = [...record.messages, ...appends];
+	// Retry-reply moves the old reply out of the record (plan 006 part 2).
+	const merged = input.type === "retry-reply"
+		? record.messages.filter((m) => !retryOmissions.has(m.id))
+		: [...record.messages, ...appends];
 	// Retry preserves every persisted attempt. Pi needs a non-assistant
 	// tail to start continue(), so its temporary history omits the trailing
 	// failures only. Count that SAME temporary prefix at settlement, or the
@@ -652,7 +736,10 @@ export async function handleChatInput(
 	const stagedAutomatic = isSubscriptionProvider(conversation.provider) && input.type === "steers";
 	let persistBaseCount = stagedAutomatic ? record.messages.length : agentMessages.length;
 	try {
-		if (!stagedAutomatic) {
+		if (input.type === "retry-reply") {
+			stores.chatStore.retireReply(chatId, [...retryOmissions], new Date().toISOString());
+			inputSaved = true;
+		} else if (!stagedAutomatic) {
 			stores.chatStore.saveMessages(chatId, merged);
 			inputSaved = true;
 		}
@@ -820,6 +907,7 @@ export async function handleChatInput(
 						searchAvailable,
 						breaks: () => effectiveSettings().breaks,
 						now: Date.now,
+						onPlanSaved: (previous, next) => assignAfterPlanInit(chatId, previous, next),
 					},
 					agentOpts,
 				)
@@ -919,6 +1007,7 @@ export async function handleChatInput(
 				const admittedMessages = turnMessages.filter((message) => !tentativeSideIds.has((message as LhMessage).id) || admittedSideIds.has((message as LhMessage).id));
 				const stamped = persistTurn(stores.chatStore, chatId, persistBaseCount, admittedMessages, isAborted);
 				noteSteersDurable(chatId, stores.chatStore.getChat(chatId)?.messages ?? stamped);
+					assignAddedCourseFiles(chatId, collectCourseFiles(chatId, record.messages.length));
 				// usage log append (idempotent per turn id) — the stats bar
 				// refolds this on the client after the turn settles. The
 				// provenance message is the turn's FIRST new assistant message.
