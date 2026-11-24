@@ -2,7 +2,7 @@
 
 import React from "react";
 import { HostDialog } from "@/components/host-dialog";
-import { filePathLabel } from "@/src/core";
+import { fileCategory, filePathLabel } from "@/src/core";
 import type { CourseFile, CourseFileStatus, CourseMaterial } from "@/src/core";
 
 export const STATUS_LABEL: Record<CourseFileStatus, string> = {
@@ -54,18 +54,32 @@ function blocksOf(
 		}));
 }
 
+/** An exam file's patterns, grouped per plan node in plan-map order (plan 010 part 4). */
+function examGroupsOf(file: CourseFile, material: CourseMaterial, nodes: Array<{ id: string; title: string }>) {
+	return nodes
+		.map((node) => ({
+			node,
+			patterns: (material.examPatterns ?? []).filter((p) => p.path === file.path && p.nodeId === node.id),
+		}))
+		.filter((group) => group.patterns.length > 0);
+}
+
 /** One file's details (plan 009 part 2): path, status and, once assigned, each
- *  plan node's pages and method text. Reads the panel's data; no fetch. */
-export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, onClose }: {
+ *  plan node's pages and method text; for an exam file the task patterns
+ *  (plan 010 part 4) and the move button. Reads the panel's data; no fetch. */
+export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, onClose, onMove }: {
 	file: CourseFile | null;
 	material: CourseMaterial;
 	nodes: Array<{ id: string; title: string }>;
 	lessonNodes: Array<{ lessonId: string; id: string; title: string }>;
 	onClose: () => void;
+	onMove?: (file: CourseFile, category: "material" | "exam") => void;
 }) {
 	if (!file) return null;
 	const name = filePathLabel(file.path);
-	const blocks = file.status === "assigned" ? blocksOf(file, material, nodes, lessonNodes) : [];
+	const isExam = fileCategory(file) === "exam";
+	const blocks = file.status === "assigned" && !isExam ? blocksOf(file, material, nodes, lessonNodes) : [];
+	const examGroups = file.status === "assigned" && isExam ? examGroupsOf(file, material, nodes) : [];
 	const frame = (
 		<div
 			role="dialog"
@@ -85,7 +99,29 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 			<div className="mt-3 min-h-0 flex-1 overflow-y-auto text-xs">
 				{file.status !== "assigned" ? (
 					<p className="text-muted-foreground">No plan nodes yet.</p>
-				) : blocks.length === 0 ? (
+				) : isExam ? (
+						examGroups.length === 0 ? (
+							<p className="text-muted-foreground">No task patterns found.</p>
+						) : (
+							<ul className="space-y-3">
+								{examGroups.map(({ node, patterns }) => (
+									<li key={node.id}>
+										<div className="font-semibold">{node.title}</div>
+										{patterns.map((p) => (
+											<div key={`${p.source}\u0000${p.pattern}`} className="mt-1">
+												<div>
+													<span>{p.source}</span>
+													{p.pages && <span className="text-muted-foreground"> {p.pages}</span>}
+												</div>
+												<div className="whitespace-pre-wrap text-muted-foreground">{p.pattern}</div>
+												{p.grading && <div className="whitespace-pre-wrap text-muted-foreground">Grading: {p.grading}</div>}
+											</div>
+										))}
+									</li>
+								))}
+							</ul>
+						)
+					) : blocks.length === 0 ? (
 					<p className="text-muted-foreground">Not used for any plan node.</p>
 				) : (
 					<>
@@ -105,7 +141,13 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 					</>
 				)}
 			</div>
-			<div className="mt-4 flex justify-end">
+			<div className="mt-4 flex justify-end gap-2">
+				{onMove && (
+					<button type="button" onClick={() => onMove(file, isExam ? "material" : "exam")}
+						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+						{isExam ? "Move to Course material" : "Move to Exams"}
+					</button>
+				)}
 				<button type="button" onClick={onClose}
 					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
 					Close

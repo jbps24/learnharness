@@ -1,4 +1,12 @@
-import { COURSE_METHOD_CAP, type CourseMaterial, type NodeConflict, type NodeMethod } from "./contracts/course.ts";
+import {
+	COURSE_METHOD_CAP,
+	EXAM_PATTERN_CAP,
+	fileCategory,
+	type CourseMaterial,
+	type ExamPattern,
+	type NodeConflict,
+	type NodeMethod,
+} from "./contracts/course.ts";
 import type { PlanTree } from "./contracts/plan.ts";
 
 export interface AssignmentTargetNode {
@@ -18,6 +26,7 @@ export interface CourseAssignPromptInput {
 	path: string;
 	targets: readonly AssignmentTargetNode[];
 	existingMethods?: Record<string, readonly ExistingNodeMethod[]>;
+	category?: "material" | "exam";
 }
 
 export interface AssignmentNodeOutput {
@@ -27,9 +36,17 @@ export interface AssignmentNodeOutput {
 	sameRouteAsExisting: boolean | null;
 }
 
-export interface AssignmentResult {
-	nodes: AssignmentNodeOutput[];
+export interface ExamAssignmentNodeOutput {
+	nodeId: string;
+	source: string;
+	pages: string;
+	pattern: string;
+	grading?: string;
 }
+
+export type AssignmentResult =
+	| { category: "material"; nodes: AssignmentNodeOutput[] }
+	| { category: "exam"; nodes: ExamAssignmentNodeOutput[] };
 
 export type CourseAssignWorkerResult =
 	| { ok: true; result: AssignmentResult }
@@ -40,6 +57,7 @@ export interface CourseAssignWorkerInput {
 	path: string;
 	targets: AssignmentTargetNode[];
 	existingMethods: Record<string, ExistingNodeMethod[]>;
+	category?: "material" | "exam";
 	abortSignal: AbortSignal;
 }
 
@@ -73,15 +91,21 @@ export interface AssignmentTargetsResult {
 	material: CourseMaterial;
 }
 
-/** The worker instructions (plan 007 part 3, owner-confirmed), appended after
- *  the pdf-reader's reading doctrine. */
+/** The worker instructions (plan 007 part 3, plan 010 part 2, owner-confirmed),
+ *  appended after the pdf-reader's reading doctrine. */
 export const COURSE_ASSIGN_INSTRUCTIONS = `You read one course file for a learning application. The learner must pass an exam in this course, so the course's own way of solving each problem is what matters, not the most standard or shortest way.
+
+First decide what this file is. A past exam or exam-like task sheet of the course (tasks with points or a time limit, "Klausur", "Prüfung", "Exam", possibly with a solution) is an **exam**. Anything else (script, lecture notes, exercise solutions that teach a method) is **material**. When the task states the category, use that one.
+
+For **material**, do what follows below and set "category":"material".
 
 You get the lesson's plan nodes (id, title, summary). For every node this file actually works through, write down the course's route: the procedure step by step, the notation and conventions it uses, the criteria or tables it applies, in the order the file does it. Write it so a tutor can teach and grade by it without the file. Write the method in the file's language. Cite pages the way the file numbers them, e.g. (S. 12) or (p. 12). Leave out nodes the file only mentions or doesn't cover. Never fill a gap from your own knowledge.
 
 Some nodes already carry a method from another course file. For those, also decide: does this file use the same route (same steps, possibly other wording or notation) or a different route? Set sameRouteAsExisting to true or false.
 
-Return ONE JSON object and nothing else: {"nodes":[{"nodeId":string,"pages":string,"method":string,"sameRouteAsExisting":boolean|null}]}. Each method at most ${COURSE_METHOD_CAP.toLocaleString("en-US")} characters.`;
+For material, return ONE JSON object and nothing else: {"category":"material","nodes":[{"nodeId":string,"pages":string,"method":string,"sameRouteAsExisting":boolean|null}]}. Each method at most ${COURSE_METHOD_CAP.toLocaleString("en-US")} characters.
+
+For an **exam**, set "category":"exam" and, for every plan node one of its tasks exercises, write one entry per task: source (the task as the file names it, with the exam's label if it has one, e.g. "WS22 A3b"), pages, pattern (the task type; what is given; what is asked; the expected answer format such as a sketch, a value, a short justification; typical numbers or functions; the points), and, only when the file contains a solution, grading (which steps earn how many points and the expected final form). Write in the file's language. Never invent a solution the file does not contain. Return ONE JSON object and nothing else: {"category":"exam","nodes":[{"nodeId":string,"source":string,"pages":string,"pattern":string,"grading"?:string}]}. Each pattern and each grading at most ${EXAM_PATTERN_CAP.toLocaleString("en-US")} characters.`;
 
 export function buildAssignmentPrompt(input: CourseAssignPromptInput): string {
 	const lines = [`Course file: ${input.path}`, "", "Plan nodes to look for in this file:"];
@@ -95,6 +119,7 @@ export function buildAssignmentPrompt(input: CourseAssignPromptInput): string {
 			lines.push(`  existing method from ${item.path}: ${item.method}`);
 		}
 	}
+	if (input.category) lines.push("", `This file is a ${input.category}; do not decide again.`);
 	lines.push("", "Read the file, then return the JSON object.");
 	return lines.join("\n");
 }
@@ -115,6 +140,10 @@ export function parseAssignment(text: string, targetIds: readonly string[]): Par
 	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
 		return { ok: false, problems: ["the output must be one JSON object with a \"nodes\" array"] };
 	}
+	const category = (raw as { category?: unknown }).category;
+	if (category !== "material" && category !== "exam") {
+		return { ok: false, problems: ["\"category\" must be \"material\" or \"exam\""] };
+	}
 	const entries = (raw as { nodes?: unknown }).nodes;
 	if (!Array.isArray(entries)) return { ok: false, problems: ["\"nodes\" must be an array"] };
 
@@ -122,6 +151,7 @@ export function parseAssignment(text: string, targetIds: readonly string[]): Par
 	const known = new Set(targetIds);
 	const seen = new Set<string>();
 	const nodes: AssignmentNodeOutput[] = [];
+	const examNodes: ExamAssignmentNodeOutput[] = [];
 	for (const [index, entry] of entries.entries()) {
 		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
 			problems.push(`nodes[${index}] is not an object`);
@@ -134,11 +164,41 @@ export function parseAssignment(text: string, targetIds: readonly string[]): Par
 		if (!known.has(nodeId)) {
 			problems.push(`unknown node id "${nodeId}"`);
 			valid = false;
-		} else if (seen.has(nodeId)) {
+		} else if (category === "material" && seen.has(nodeId)) {
 			problems.push(`duplicate node id "${nodeId}"`);
 			valid = false;
 		}
 		seen.add(nodeId);
+		if (category === "exam") {
+			const source = typeof item.source === "string" ? item.source : "";
+			if (source.trim() === "") {
+				problems.push(`${label}: the source is empty`);
+				valid = false;
+			}
+			const pattern = typeof item.pattern === "string" ? item.pattern : "";
+			if (pattern.trim() === "") {
+				problems.push(`${label}: the pattern is empty`);
+				valid = false;
+			} else if (pattern.length > EXAM_PATTERN_CAP) {
+				problems.push(`${label}: the pattern is ${pattern.length} characters, over the ${EXAM_PATTERN_CAP} cap`);
+				valid = false;
+			}
+			const grading = typeof item.grading === "string" && item.grading.trim() !== "" ? item.grading : undefined;
+			if (grading !== undefined && grading.length > EXAM_PATTERN_CAP) {
+				problems.push(`${label}: the grading is ${grading.length} characters, over the ${EXAM_PATTERN_CAP} cap`);
+				valid = false;
+			}
+			if (valid) {
+				examNodes.push({
+					nodeId,
+					source,
+					pages: typeof item.pages === "string" ? item.pages : "",
+					pattern,
+					...(grading !== undefined ? { grading } : {}),
+				});
+			}
+			continue;
+		}
 		const method = typeof item.method === "string" ? item.method : "";
 		if (method.trim() === "") {
 			problems.push(`${label}: the method is empty`);
@@ -161,7 +221,8 @@ export function parseAssignment(text: string, targetIds: readonly string[]): Par
 			});
 		}
 	}
-	return problems.length > 0 ? { ok: false, problems } : { ok: true, value: { nodes } };
+	if (problems.length > 0) return { ok: false, problems };
+	return { ok: true, value: category === "exam" ? { category, nodes: examNodes } : { category, nodes } };
 }
 
 export function applyAssignment(
@@ -170,7 +231,48 @@ export function applyAssignment(
 	result: AssignmentResult,
 	targetIds?: readonly string[],
 ): CourseMaterial {
+	const current = material.files.find((file) => file.path === filePath);
+	const locked = current?.categoryBy === "learner" && current.category !== undefined;
+	// A learner-set category wins; an answer of the other category is ignored.
+	const category = locked ? current.category! : result.category;
+	const categoryBy = locked ? ("learner" as const) : ("reader" as const);
+	const flipped = current !== undefined && fileCategory(current) !== category;
+	const finish = (rest: Partial<CourseMaterial>): CourseMaterial => {
+		const files = material.files.map((file) => {
+			if (file.path !== filePath) return file;
+			const { error: _error, ...kept } = file;
+			return { ...kept, status: "assigned" as const, category, categoryBy };
+		});
+		return { ...material, ...rest, files };
+	};
+	if (result.category !== category) return finish({});
+
 	const targets = new Set(targetIds ?? result.nodes.map((node) => node.nodeId));
+	if (result.category === "exam") {
+		const examPatterns: ExamPattern[] = [
+			...(material.examPatterns ?? []).filter((p) => p.path !== filePath || !targets.has(p.nodeId)),
+			...result.nodes.map((node) => ({
+				nodeId: node.nodeId,
+				path: filePath,
+				source: node.source,
+				...(node.pages ? { pages: node.pages } : {}),
+				pattern: node.pattern,
+				...(node.grading ? { grading: node.grading } : {}),
+			})),
+		];
+		const methods = flipped ? material.methods.filter((m) => m.path !== filePath) : material.methods;
+		const conflicts = flipped
+			? material.conflicts
+					.map(({ chosen, ...rest }) => ({
+						...rest,
+						paths: rest.paths.filter((p) => p !== filePath),
+						...(chosen && chosen !== filePath ? { chosen } : {}),
+					}))
+					.filter((c) => c.paths.length >= 2)
+			: material.conflicts;
+		return finish({ examPatterns, methods, conflicts });
+	}
+	const examPatterns = (material.examPatterns ?? []).filter((p) => p.path !== filePath || (!flipped && !targets.has(p.nodeId)));
 	const methods: NodeMethod[] = material.methods.filter((m) => !(m.path === filePath && targets.has(m.nodeId)));
 	let conflicts: NodeConflict[] = material.conflicts.map((c) => ({ ...c, paths: [...c.paths] }));
 
@@ -192,12 +294,7 @@ export function applyAssignment(
 		});
 	}
 
-	const files = material.files.map((file) => {
-		if (file.path !== filePath) return file;
-		const { error: _error, ...rest } = file;
-		return { ...rest, status: "assigned" as const };
-	});
-	return { ...material, files, methods, conflicts };
+	return finish({ methods, conflicts, ...(material.examPatterns ? { examPatterns } : {}) });
 }
 
 export function assignmentTargets(input: AssignmentTargetsInput): AssignmentTargetsResult {

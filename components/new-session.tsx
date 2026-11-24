@@ -266,11 +266,18 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 	};
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
+	const [examCounts, setExamCounts] = useState<Record<string, number>>({});
 	const openPicker = () => {
 		if (snapshot) {
 			setPickerOpen(true);
 			return;
 		}
+		void fetch("/api/practice/exam-coverage")
+			.then((r) => r.json() as Promise<{ counts?: Record<string, number> }>)
+			.then((body) => setExamCounts(body.counts ?? {}))
+			.catch(() => {
+				/* no badges without the coverage */
+			});
 		void fetch("/api/graph")
 			.then((r) => r.json() as Promise<GraphSnapshot>)
 			.then((snap) => {
@@ -351,6 +358,7 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 						chains={snapshot?.chains ?? []}
 						sessions={snapshot?.sessions ?? {}}
 						fileSources={snapshot?.fileSources ?? {}}
+						examCounts={examCounts}
 						onClose={() => setPickerOpen(false)}
 						selectMode
 						controlledSelection={new Set(picks.map((p) => p.id))}

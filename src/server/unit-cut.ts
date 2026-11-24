@@ -31,7 +31,7 @@ const EMPTY_JUDGMENT: LessonJudgment = { learnerWide: "", commitments: "", nodes
 /** Markers that must not be summarized as lesson content. */
 function withoutMarkers(messages: readonly LhMessage[]): LhMessage[] {
 	return messages.filter(
-		(m) => m.role !== "custom" || (m.customType !== "compaction" && m.customType !== "lesson-record" && m.customType !== "units-note" && m.customType !== "course-files" && m.customType !== "course-method"),
+		(m) => m.role !== "custom" || (m.customType !== "compaction" && m.customType !== "lesson-record" && m.customType !== "units-note" && m.customType !== "course-files" && m.customType !== "course-method" && m.customType !== "exam-pattern"),
 	);
 }
 

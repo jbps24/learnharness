@@ -1,5 +1,5 @@
 import type { ChatRecord } from "./contracts/chat.ts";
-import type { CourseFile, CourseMaterial, PropositionMethod } from "./contracts/course.ts";
+import { fileCategory, type CourseFile, type CourseMaterial, type PropositionMethod } from "./contracts/course.ts";
 import type { GraphNode } from "./contracts/graph.ts";
 import type { PlanTree } from "./contracts/plan.ts";
 import type { LhMessage } from "./native-messages.ts";
@@ -38,7 +38,9 @@ export function inheritCourseMaterial(
 ): CourseMaterial & { propositionMethods: PropositionMethod[] } {
 	const files = new Map<string, CourseFile>();
 	const propositionMethods: PropositionMethod[] = [];
+	const propositionExamPatterns: NonNullable<CourseMaterial["propositionExamPatterns"]> = [];
 	const seen = new Set<string>();
+	const seenExam = new Set<string>();
 	for (const pick of picks) {
 		for (const point of pick.provenance) {
 			const lesson = lessons.get(point.chatId);
@@ -63,7 +65,15 @@ export function inheritCourseMaterial(
 					method: m.method,
 				});
 			}
+			const examPaths = new Set(material.files.filter((f) => f.binding && fileCategory(f) === "exam").map((f) => f.path));
+			for (const p of material.examPatterns ?? []) {
+				if (p.nodeId !== nodeId || !examPaths.has(p.path)) continue;
+				const key = `${pick.id}\n${p.path}\n${p.source}`;
+				if (seenExam.has(key)) continue;
+				seenExam.add(key);
+				propositionExamPatterns.push({ propositionId: pick.id, lessonId: lesson.id, ...p });
+			}
 		}
 	}
-	return { files: [...files.values()], methods: [], conflicts: [], propositionMethods };
+	return { files: [...files.values()], methods: [], conflicts: [], propositionMethods, propositionExamPatterns };
 }

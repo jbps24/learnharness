@@ -100,6 +100,7 @@ describe("course-assign-queue", () => {
 			return {
 				ok: true,
 				result: {
+					category: "material",
 					nodes: [{ nodeId: "n1", pages: "p. 1", method: `From ${input.path}`, sameRouteAsExisting: input.path === "/course/b.pdf" ? true : null }],
 				},
 			};
@@ -146,7 +147,7 @@ describe("course-assign-queue", () => {
 			jobStore,
 			worker: async () => {
 				sawRunning = jobStore.all().some((j) => j.chatId === "chat_1" && j.status === "running");
-				return { ok: true, result: { nodes: [] } };
+				return { ok: true, result: { category: "material", nodes: [] } };
 			},
 		});
 
@@ -180,6 +181,7 @@ describe("course-assign-queue", () => {
 				return {
 					ok: true,
 					result: {
+						category: "material",
 						nodes: [{ nodeId: "n1", pages: "p. 1", method: "Route A", sameRouteAsExisting: null }],
 					},
 				};
@@ -221,7 +223,7 @@ describe("course-assign-queue", () => {
 				await new Promise((resolve) => setTimeout(resolve, 5));
 				active--;
 				events.push(`end:${input.path}`);
-				return { ok: true, result: { nodes: [] } };
+				return { ok: true, result: { category: "material", nodes: [] } };
 			},
 		});
 
@@ -254,7 +256,7 @@ describe("course-assign-queue", () => {
 			jobStore,
 			worker: async (input) => {
 				seen = input.targets;
-				return { ok: true, result: { nodes: [] } };
+				return { ok: true, result: { category: "material", nodes: [] } };
 			},
 		});
 
@@ -286,7 +288,7 @@ describe("course-assign-queue", () => {
 			jobStore,
 			worker: async (input) => {
 				existing = input.existingMethods;
-				return { ok: true, result: { nodes: [] } };
+				return { ok: true, result: { category: "material", nodes: [] } };
 			},
 		});
 
@@ -400,6 +402,7 @@ describe("course-assign-queue", () => {
 				return {
 					ok: true,
 					result: {
+						category: "material",
 						nodes: [{ nodeId: "n1", pages: "p. 1", method: "Should not save", sameRouteAsExisting: null }],
 					},
 				};
@@ -446,6 +449,7 @@ describe("course-assign-queue", () => {
 				return {
 					ok: true,
 					result: {
+						category: "material",
 						nodes: [
 							{ nodeId: "n1", pages: "p. 1", method: "Keep n1", sameRouteAsExisting: true },
 							{ nodeId: "n2", pages: "p. 2", method: "Removed n2", sameRouteAsExisting: false },

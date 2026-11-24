@@ -140,7 +140,7 @@ export function createCourseAssignWorker(options: CourseAssignWorkerOptions): Co
 		const engine = options.engineFor();
 		if (!engine) return { ok: false, error: "No model is configured for reading course files." };
 		const targetIds = input.targets.map((t) => t.id);
-		const prompt = buildAssignmentPrompt({ path: input.path, targets: input.targets, existingMethods: input.existingMethods });
+		const prompt = buildAssignmentPrompt({ path: input.path, targets: input.targets, existingMethods: input.existingMethods, ...(input.category ? { category: input.category } : {}) });
 		const isPdf = input.path.toLowerCase().endsWith(".pdf");
 
 		const run = async (extra: string): Promise<string | { failure: string }> => {

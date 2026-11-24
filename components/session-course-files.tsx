@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, InfoIcon } from "lucide-react";
 import { useServerEvent, useServerResync } from "./server-events.tsx";
 import { CONFLICT_TIP, CourseFileDetailsDialog, STATUS_LABEL } from "./course-file-details-dialog.tsx";
-import { filePathLabel } from "@/src/core";
+import { fileCategory, filePathLabel } from "@/src/core";
 import type { CourseFile, CourseMaterial } from "@/src/core";
 
 interface CourseResponse {
@@ -72,6 +72,22 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 	if (!active || !data?.material || data.material.files.length === 0) return null;
 	const { files, methods, conflicts } = data.material;
 	const ordered = [...files].sort((a, b) => a.addedAt.localeCompare(b.addedAt));
+	const groups = [
+		{ label: "Course material", group: ordered.filter((f) => fileCategory(f) === "material") },
+		{ label: "Exams", group: ordered.filter((f) => fileCategory(f) === "exam") },
+	].filter((g) => g.group.length > 0);
+
+	const moveFile = async (file: CourseFile, category: "material" | "exam") => {
+		try {
+			await fetch(`/api/chats/${chatId}/course`, {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ path: file.path, category }),
+			});
+		} catch {
+			/* the list stays as it was; the re-read event updates it on success */
+		}
+	};
 
 	const toggleOpen = () => {
 		const next = !open;
@@ -120,8 +136,12 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 				<span>Files ({files.length})</span>
 			</button>
 			{open && (
-				<ul className="mt-1 space-y-1">
-					{ordered.map((file) => {
+				<div className="mt-1 space-y-2">
+					{groups.map(({ label, group }) => (
+					<div key={label}>
+					<div className="font-medium text-muted-foreground">{label}</div>
+					<ul className="mt-1 space-y-1">
+					{group.map((file) => {
 						const binding = overrides[file.path] ?? file.binding;
 						const conflicted = conflicts.some((c) => c.chosen === undefined && c.paths.includes(file.path)
 							&& methods.some((m) => m.path === file.path && m.nodeId === c.nodeId));
@@ -150,12 +170,15 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 							</li>
 						);
 					})}
-				</ul>
+					</ul>
+					</div>
+					))}
+				</div>
 			)}
 			{hint && <div className="mt-1 text-muted-foreground">{hint}</div>}
 			<CourseFileDetailsDialog file={files.find((f) => f.path === detailsPath) ?? null}
 				material={data.material} nodes={data.nodes} lessonNodes={data.lessonNodes ?? []}
-				onClose={() => setDetailsPath(null)} />
+				onClose={() => setDetailsPath(null)} onMove={(f, category) => void moveFile(f, category)} />
 		</div>
 	);
 }

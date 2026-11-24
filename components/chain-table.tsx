@@ -130,7 +130,9 @@ export function ChainTableBody({
 	keyboardActive = true,
 	sourceInventoryPending = false,
 	pickerChrome = false,
+	examCounts,
 }: {
+	examCounts?: Record<string, number>;
 	sourceInventoryPending?: boolean;
 	pickerChrome?: boolean;
 	keyboardActive?: boolean;
@@ -560,6 +562,9 @@ export function ChainTableBody({
 															>
 																{node.statement}
 															</ToolContentResponse>
+															{examCounts?.[id] ? (
+																<span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">exam ×{examCounts[id]}</span>
+															) : null}
 															<TreeCell widthClassName="w-14" />
 															<TreeCell widthClassName="w-20" />
 														</div>
@@ -684,8 +689,11 @@ export function ChainTableOverlay({
 	keyboardActive = true,
 	registerInteraction = true,
 	pickerChrome = false,
+	examCounts,
 }: {
 	open: boolean;
+	/** Practice picker: propositions the exams cover (plan 010 part 4). */
+	examCounts?: Record<string, number>;
 	/** Host knowledge picker has clearance, but no sidebar-reopen action. */
 	pickerChrome?: boolean;
 	/** A host knowledge picker registers once through its pane or modal shell. */
@@ -859,6 +867,7 @@ export function ChainTableOverlay({
 					onClose={onClose}
 					selectMode={selectMode}
 					onSelect={onClose}
+					examCounts={examCounts}
 				/>
 			</div>
 			{!selectMode && <DeleteSourceDialog open={deleteOpen}

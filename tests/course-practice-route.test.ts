@@ -122,6 +122,7 @@ describe("POST /api/chats practice course-material inheritance", () => {
 					method: "Use folding diagram",
 				},
 			],
+			propositionExamPatterns: [],
 		});
 	});
 
@@ -182,6 +183,7 @@ describe("POST /api/chats practice course-material inheritance", () => {
 			methods: [],
 			conflicts: [],
 			propositionMethods: [],
+			propositionExamPatterns: [],
 		});
 	});
 });

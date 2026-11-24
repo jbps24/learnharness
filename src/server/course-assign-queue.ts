@@ -1,5 +1,6 @@
 import {
 	applyAssignment,
+	type AssignmentResult,
 	type AssignmentTarget,
 	type AssignmentTargetNode,
 	type CourseAssignWorker,
@@ -86,14 +87,31 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 		const controller = new AbortController();
 		registerJobAbort(job.id, controller);
 		try {
-			const outcome = await deps.worker({ chatId, path: target.path, targets, existingMethods, abortSignal: controller.signal });
+			const outcome = await deps.worker({ chatId, path: target.path, targets,
+				existingMethods,
+				...(file.categoryBy === "learner" && file.category ? { category: file.category } : {}),
+				abortSignal: controller.signal,
+			});
 			if (controller.signal.aborted) throw new Error("aborted");
 			if (outcome.ok) {
 				const freshChat = deps.chatStore.getChat(chatId);
 				const current = freshChat?.courseMaterial;
 				if (!current) throw new Error("course material is gone");
 				const liveIds = new Set((freshChat.tree?.nodes ?? []).map((n) => n.id));
-				const filtered = { nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) };
+				const filtered: AssignmentResult =
+					outcome.result.category === "exam"
+						? { category: "exam", nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) }
+						: { category: "material", nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) };
+				const currentFile = current.files.find((f) => f.path === target.path);
+				if (
+					currentFile?.categoryBy === "learner" &&
+					currentFile.category !== undefined &&
+					currentFile.category !== filtered.category
+				) {
+					console.warn(
+						`[chat ${chatId}] course assignment of ${target.path}: the reader answered ${filtered.category}, the learner set ${currentFile.category}; answer ignored`,
+					);
+				}
 				save(chatId, applyAssignment(current, target.path, filtered, targets.map((t) => t.id)));
 				deps.jobStore.updateJob(job.id, { status: "done", activity: "assigned" });
 			} else {
