@@ -37,6 +37,7 @@ import { layout as dagreLayout } from "dagre-d3-es/src/dagre/index.js";
 // Mermaid's default flowchart edge curve: dagre's waypoints drawn through
 // d3's curveBasis (the exact recipe dagre-d3's own renderer uses).
 import { curveBasis, line } from "d3-shape";
+import type { PlanUnit } from "@/src/core";
 
 /** A node for layout purposes — the payload's shape and the tree's shape agree. */
 export interface LayoutNode {
@@ -74,6 +75,10 @@ const LINE_HEIGHT = 13 / 11;
 export const MAX_LINE_EM = 12.75;
 export const GAP_X = 24;
 export const GAP_Y = 48;
+/** A unit box's padding around its nodes, and the headroom above them for
+ *  the unit title (top-left). */
+export const CLUSTER_PAD = 10;
+export const CLUSTER_TITLE_H = 16;
 
 /** The server's and first render's stand-in measure: per-character-CLASS
  *  rates least-squares-fitted against getComputedTextLength() of the live
@@ -165,7 +170,9 @@ export function blockLayout(
 	nodes: readonly LayoutNode[],
 	edges: ReadonlyArray<{ from: string; to: string }>,
 	measure: LabelMeasure,
+	units?: readonly PlanUnit[],
 ) {
+	const clustered = !!units && units.length > 0;
 	const x = new Map<string, number>();
 	const y = new Map<string, number>();
 	const nodeH = new Map<string, number>();
@@ -176,10 +183,10 @@ export function blockLayout(
 	 *  border intersection on whatever SIDE the edge leaves/enters
 	 *  (round 11: the mermaid line drawing). Keyed `${from}->${to}`. */
 	const edgePts = new Map<string, Array<{ x: number; y: number }>>();
-	if (nodes.length === 0) return { x, y, nodeH, nodeW, lines, lineH, fontSize: measure.fontSize, edgePts, originX: 0, originY: 0, width: 0, height: 0 };
+	if (nodes.length === 0) return { x, y, nodeH, nodeW, lines, lineH, fontSize: measure.fontSize, edgePts, clusters: [], originX: 0, originY: 0, width: 0, height: 0 };
 	const ids = new Set(nodes.map((n) => n.id));
 	const routed: Array<{ from: string; to: string }> = [];
-	const g = new graphlib.Graph({ compound: false, multigraph: true });
+	const g = new graphlib.Graph({ compound: clustered, multigraph: true });
 	g.setGraph({ rankdir: "TB", nodesep: GAP_X, ranksep: GAP_Y, marginx: 0, marginy: 0 });
 	const minH = 2 * lineH + 2 * PAD_Y;
 	for (const n of nodes) {
@@ -191,6 +198,19 @@ export function blockLayout(
 		nodeW.set(n.id, w);
 		nodeH.set(n.id, h);
 		g.setNode(n.id, { width: w, height: h });
+	}
+	// One dagre cluster per unit (setParent); a cluster id can't collide
+	// with a node id, so it is namespaced.
+	const clusterIds: Array<{ unit: PlanUnit; cid: string; members: string[] }> = [];
+	if (clustered) {
+		for (const u of units) {
+			const members = u.nodeIds.filter((id) => ids.has(id));
+			if (members.length === 0) continue;
+			const cid = `unit:${u.id}`;
+			g.setNode(cid, {});
+			for (const id of members) g.setParent(id, cid);
+			clusterIds.push({ unit: u, cid, members });
+		}
 	}
 	for (const e of edges) {
 		if (ids.has(e.from) && ids.has(e.to)) {
@@ -240,6 +260,35 @@ export function blockLayout(
 		stretch(nx, ny);
 		stretch(nx + nodeW.get(n.id)!, ny + nodeH.get(n.id)!);
 	}
+	// Unit boxes: the member nodes' hull, padded, with headroom for the title.
+	const clusters: Array<{ id: string; title: string; x: number; y: number; w: number; h: number }> = [];
+	for (const { unit, members } of clusterIds) {
+		let minX = Infinity;
+		let minY = Infinity;
+		let maxX = -Infinity;
+		let maxY = -Infinity;
+		for (const id of members) {
+			const nx = x.get(id);
+			const ny = y.get(id);
+			if (nx === undefined || ny === undefined) continue;
+			minX = Math.min(minX, nx);
+			minY = Math.min(minY, ny);
+			maxX = Math.max(maxX, nx + nodeW.get(id)!);
+			maxY = Math.max(maxY, ny + nodeH.get(id)!);
+		}
+		if (minX === Infinity) continue;
+		const box = {
+			id: unit.id,
+			title: unit.title,
+			x: minX - CLUSTER_PAD,
+			y: minY - CLUSTER_PAD - CLUSTER_TITLE_H,
+			w: maxX - minX + 2 * CLUSTER_PAD,
+			h: maxY - minY + 2 * CLUSTER_PAD + CLUSTER_TITLE_H,
+		};
+		clusters.push(box);
+		stretch(box.x, box.y);
+		stretch(box.x + box.w, box.y + box.h);
+	}
 	for (const e of routed) {
 		const pts = edgePts.get(`${e.from}->${e.to}`);
 		const tx = x.get(e.to);
@@ -265,6 +314,7 @@ export function blockLayout(
 		lineH,
 		fontSize: measure.fontSize,
 		edgePts,
+		clusters,
 		originX,
 		originY,
 		width: Math.max((g.graph().width ?? 0) - originX, inkMaxX === -Infinity ? 0 : inkMaxX - originX, 1),

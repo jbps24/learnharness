@@ -26,9 +26,17 @@ export interface PlanEdge {
 	to: string;
 }
 
+export interface PlanUnit {
+	id: string;
+	title: string;
+	source?: string;
+	nodeIds: string[];
+}
+
 export interface PlanTree {
 	nodes: PlanNode[];
 	edges: PlanEdge[];
+	units?: PlanUnit[];
 	/** Increments on every mutation — lets the UI animate/react to changes. */
 	version: number;
 }
@@ -128,26 +136,16 @@ export interface PlanToolResult {
 
 import type { LhMessage } from "../native-messages.ts";
 import { posedPluginQuestionOfPart } from "../tool-parts.ts";
-import { readPluginQuestionMessageAnnotation } from "../plugin-questions.ts";
+import { teachTags } from "../units.ts";
 
 /** The same derivation over the NATIVE record: quiz CALLS only (any state —
  *  a dangling call still moves position; results feed nothing). */
 export function derivePlanStatusesLh(tree: PlanTree, messages: readonly LhMessage[]): DerivedPlanStatuses {
 	const ids = new Set(tree.nodes.map((n) => n.id));
 	const runs: string[] = [];
-	for (const m of messages) {
-		if ((m as { role?: string }).role !== "assistant") continue;
-		const content = (m as { content?: unknown }).content;
-		if (!Array.isArray(content)) continue;
-		for (const [contentIndex, block] of (content as Array<{ type?: string; name?: string; arguments?: unknown }>).entries()) {
-			const annotation = readPluginQuestionMessageAnnotation(m, contentIndex);
-			if (block.type !== "toolCall") continue;
-			if (annotation.status !== "absent" ? annotation.status !== "posed" || annotation.snapshot.variant !== "teach" : block.name !== "quiz" && block.name !== "explain") continue;
-			const input = annotation.status === "posed" ? annotation.snapshot.input : block.arguments;
-			const nodeId = (input as { nodeId?: unknown } | undefined)?.nodeId;
-			if (typeof nodeId !== "string" || !ids.has(nodeId)) continue;
-			if (runs.at(-1) !== nodeId) runs.push(nodeId);
-		}
+	for (const { nodeId } of teachTags(messages)) {
+		if (!ids.has(nodeId)) continue;
+		if (runs.at(-1) !== nodeId) runs.push(nodeId);
 	}
 	const current = runs.at(-1) ?? null;
 	const visited = new Set(runs.slice(0, -1));

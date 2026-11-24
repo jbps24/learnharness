@@ -7,6 +7,7 @@
 - [PlanEdge](#planedge) — supporting declaration
 - [PlanNode](#plannode) — supporting declaration
 - [PlanTree](#plantree) — supporting declaration
+- [PlanUnit](#planunit) — supporting declaration
 
 ## PlanEdge
 
@@ -97,16 +98,18 @@ Supporting declaration used by a public type. This is not an additional runtime 
 export interface PlanTree {
     nodes: PlanNode[];
     edges: PlanEdge[];
+    units?: PlanUnit[];
     version: number;
 }
 ```
 
-**Related types:** [PlanEdge](contracts-plan.md#planedge), [PlanNode](contracts-plan.md#plannode).
+**Related types:** [PlanEdge](contracts-plan.md#planedge), [PlanNode](contracts-plan.md#plannode), [PlanUnit](contracts-plan.md#planunit).
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
 - [nodes](#plantree-nodes)
 - [edges](#plantree-edges)
+- [units](#plantree-units)
 - [version](#plantree-version)
 
 ### PlanTree nodes
@@ -121,10 +124,60 @@ nodes: PlanNode[];
 edges: PlanEdge[];
 ```
 
+### PlanTree units
+
+```ts
+units?: PlanUnit[];
+```
+
 ### PlanTree version
 
 Increments on every mutation — lets the UI animate/react to changes.
 
 ```ts
 version: number;
+```
+
+## PlanUnit
+
+Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
+
+```ts
+export interface PlanUnit {
+    id: string;
+    title: string;
+    source?: string;
+    nodeIds: string[];
+}
+```
+
+**Member index** (including nested object members; inherited members are defined in the linked base types):
+
+- [id](#planunit-id)
+- [title](#planunit-title)
+- [source](#planunit-source)
+- [nodeIds](#planunit-nodeids)
+
+### PlanUnit id
+
+```ts
+id: string;
+```
+
+### PlanUnit title
+
+```ts
+title: string;
+```
+
+### PlanUnit source
+
+```ts
+source?: string;
+```
+
+### PlanUnit nodeIds
+
+```ts
+nodeIds: string[];
 ```

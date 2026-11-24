@@ -107,7 +107,9 @@ import { PhaseChip, PhaseDivider } from "@/components/phase-divider";
 import {
 	CompactionCutDivider,
 	CompactionMomentDivider,
+	UnitCutDivider,
 	type CompactionDividerData,
+	type UnitCutDividerData,
 } from "@/components/compaction-divider";
 import { CoverageRing } from "@/components/extraction-coverage";
 import { Button } from "@/components/ui/button";
@@ -272,6 +274,7 @@ export function Chat({
 	initialPrompt,
 	initiallyInFlight,
 	initiallyCompacting = false,
+	initiallyCompactingUnit,
 	initialConfigured = false,
 	kind = "teach",
 }: {
@@ -293,6 +296,9 @@ export function Chat({
 	 * compaction-changed event already fired). The transcript spinner
 	 * and send gates key on it. */
 	initiallyCompacting?: boolean;
+	/** The unit number when the compaction at mount is a unit cut (the
+	 *  registry's runningUnit); the banner reads SUMMARIZING UNIT <n>…. */
+	initiallyCompactingUnit?: number;
 	/** slotsConfigured(server record) — the persistent setup CTA keys on
 	 *  it (BYOK, owner 2026-09-22). The server gate stays the truth; this
 	 *  only decides whether the pill rides the composer. */
@@ -1107,6 +1113,8 @@ export function Chat({
 	// server's registry mutex is the structural gate; this is the
 	// affordance).
 	const [compacting, setCompacting] = useState(initiallyCompacting);
+	// Set while the running cut is a unit cut (plan 001 part 8): the wording only.
+	const [compactingUnit, setCompactingUnit] = useState<number | undefined>(initiallyCompacting ? initiallyCompactingUnit : undefined);
 	submissionLive.current.ready = !compacting && reconciliation === "ready";
 	// A failed model response (issue #110): Retry keeps the saved input
 	// and completed work, without another learner message. Offered from
@@ -1549,6 +1557,7 @@ export function Chat({
 		// (emitted by the compaction write itself) carries the marker in.
 		if (p.chatId !== chatId) return;
 		setCompacting(p.running);
+		setCompactingUnit(p.running ? p.unit : undefined);
 	});
 	useServerEvent("record-changed", (p) => {
 		// The silent dismissal write (A2, 2026-10-03): no turn ever ran, so
@@ -1806,6 +1815,8 @@ export function Chat({
 												return <CompactionMomentDivider key={pi} data={part.data as CompactionDividerData} />;
 											case "data-compaction-cut":
 												return <CompactionCutDivider key={pi} data={part.data as CompactionDividerData} />;
+											case "data-unit-cut":
+												return <UnitCutDivider key={pi} data={part.data as UnitCutDividerData} />;
 											case "data-plugin-problem-submission": {
 												const submitted = readPluginProblemSubmission(part.data);
 												return <PluginProblemSubmitted key={pi} data={part.data} snapshot={submitted ? pluginProblemById(nativeMessages, submitted.problemId) : null} chatId={chatId} />;
@@ -2015,8 +2026,8 @@ export function Chat({
 						    BEFORE beginTurn; the settle kick runs after endTurn). */}
 							{compacting && (
 								<span className="flex items-center gap-2 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground">
-									<BrailleSpinner label="Compacting context" />
-									<Shimmer duration={1}>COMPACTING CONTEXT…</Shimmer>
+									<BrailleSpinner label={compactingUnit !== undefined ? `Summarizing unit ${compactingUnit}` : "Compacting context"} />
+									<Shimmer duration={1}>{compactingUnit !== undefined ? `SUMMARIZING UNIT ${compactingUnit}…` : "COMPACTING CONTEXT…"}</Shimmer>
 								</span>
 							)}
 							{(status === "submitted" || turnInFlight) && (
@@ -2217,7 +2228,7 @@ export function Chat({
 						onClose={() => setFigureFocus(null)}
 					/>
 				)}
-				{planOpen && <PlanPopup messages={messages} onClose={() => setPlanOpen(false)} />}
+				{planOpen && <PlanPopup messages={messages} nativeMessages={nativeMessages} onClose={() => setPlanOpen(false)} />}
 				<SelectionToolbar viewport={transcriptElement} actions={selectionActions} />
 				{citationEdit && (
 					<CitationCommentPopover

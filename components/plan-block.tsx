@@ -17,8 +17,8 @@ import {
 	type LayoutNode,
 	type PlanLayout,
 } from "@/components/plan-layout";
-import type { PlanBlockData, PlanNodeStatus, PlanTree } from "@/src/core";
-import { derivedNodeStatus, derivePlanStatuses } from "@/src/core";
+import type { LhMessage, PlanBlockData, PlanNodeStatus, PlanTree, PlanUnit } from "@/src/core";
+import { currentUnitIndex, derivedNodeStatus, derivePlanStatuses, finishedUnitIds } from "@/src/core";
 import { Hint } from "@/components/ui/hint";
 import { useAppearance } from "@/components/settings/appearance";
 import { InteractionLayerOwner, useInteractionLayer } from "./interaction-layers";
@@ -166,6 +166,7 @@ function probeMeasure(el: SVGTextElement, box: HTMLDivElement): LabelMeasure {
 /** Stable empties for "no plan yet" (the layout keys on identity). */
 const NO_NODES: readonly LayoutNode[] = [];
 const NO_EDGES: ReadonlyArray<{ from: string; to: string }> = [];
+const NO_UNITS: readonly PlanUnit[] = [];
 
 /**
  * One plan's layout, measured in the real font (null plan = empty layout).
@@ -187,22 +188,24 @@ const NO_EDGES: ReadonlyArray<{ from: string; to: string }> = [];
  * Does NOT measure while the diagram has no layout box (an ancestor with
  * display:none reads 0 widths); the chart layout stays until it shows.
  */
-export function usePlanLayout(plan: { nodes: readonly LayoutNode[]; edges: ReadonlyArray<{ from: string; to: string }> } | null) {
+export function usePlanLayout(plan: { nodes: readonly LayoutNode[]; edges: ReadonlyArray<{ from: string; to: string }> } | null, planUnits?: readonly PlanUnit[]) {
 	// Canonical reads can recreate the same plan, and status changes do not
 	// move its boxes. Key the chart and real-font probe on ordered geometry
 	// inputs, not the identities of the record's arrays or view objects.
 	const geometryKey = plan?.nodes.length ? JSON.stringify([
 		plan.nodes.map(({ id, title }) => ({ id, title })),
 		plan.edges.map(({ from, to }) => ({ from, to })),
+		// Unit boxes (plan 001 part 8) are geometry too: they pad the graph.
+		(planUnits ?? NO_UNITS).map(({ id, title, nodeIds }) => ({ id, title, nodeIds })),
 	]) : "";
-	const [nodes, edges] = useMemo((): readonly [readonly LayoutNode[], ReadonlyArray<{ from: string; to: string }>] => (
-		geometryKey ? JSON.parse(geometryKey) : [NO_NODES, NO_EDGES]
+	const [nodes, edges, units] = useMemo((): readonly [readonly LayoutNode[], ReadonlyArray<{ from: string; to: string }>, readonly PlanUnit[]] => (
+		geometryKey ? JSON.parse(geometryKey) : [NO_NODES, NO_EDGES, NO_UNITS]
 	), [geometryKey]);
 	const { appearance: { fontFamily } } = useAppearance();
 	const sentinel = useRef<SVGTextElement>(null);
 	const measurer = useRef<SVGTextElement>(null);
 	const breaker = useRef<HTMLDivElement>(null);
-	const chart = useMemo(() => blockLayout(nodes, edges, chartMeasure), [nodes, edges]);
+	const chart = useMemo(() => blockLayout(nodes, edges, chartMeasure, units), [nodes, edges, units]);
 	const [measured, setMeasured] = useState<{ nodes: typeof nodes; edges: typeof edges; layout: PlanLayout } | null>(null);
 	useLayoutEffect(() => {
 		const watch = sentinel.current;
@@ -211,7 +214,7 @@ export function usePlanLayout(plan: { nodes: readonly LayoutNode[]; edges: Reado
 		if (nodes.length === 0 || !watch || !el || !box || typeof el.getComputedTextLength !== "function") return;
 		const measure = () => {
 			if (watch.getComputedTextLength() === 0) return; // not rendered yet
-			setMeasured({ nodes, edges, layout: blockLayout(nodes, edges, probeMeasure(el, box)) });
+			setMeasured({ nodes, edges, layout: blockLayout(nodes, edges, probeMeasure(el, box), units) });
 		};
 		measure();
 		const remeasure = () => flushSync(measure);
@@ -239,7 +242,7 @@ export function usePlanLayout(plan: { nodes: readonly LayoutNode[]; edges: Reado
 			fonts?.removeEventListener("loadingdone", remeasure);
 			observer?.disconnect();
 		};
-	}, [nodes, edges, fontFamily]);
+	}, [nodes, edges, units, fontFamily]);
 	const layout = measured && measured.nodes === nodes && measured.edges === edges ? measured.layout : chart;
 	const probe: PlanProbe = { sentinel, measurer, breaker };
 	return { layout, probe };
@@ -317,7 +320,17 @@ export function PlanDiagram({
 	naturalSize,
 	monochrome,
 	fill,
+	units,
+	finishedUnitIds,
+	currentUnitId,
 }: {
+	/** Unit boxes (plan 001 part 8): none → today's layout, unchanged. The
+	 *  boxes themselves come from `layout` (usePlanLayout with the units). */
+	units?: readonly PlanUnit[];
+	/** Live overlay only: finished units render muted… */
+	finishedUnitIds?: readonly string[];
+	/** …and the current unit's box takes the emphasis stroke. */
+	currentUnitId?: string | null;
 	/** usePlanLayout's result for these same nodes + edges. */
 	layout: PlanLayout;
 	nodes: readonly LayoutNode[];
@@ -347,6 +360,11 @@ export function PlanDiagram({
 	 *  flank's width and the band's height rather than run width-first. */
 	fill?: boolean;
 }) {
+	const mutedNodes = useMemo(() => {
+		const out = new Set<string>();
+		for (const u of units ?? []) if (finishedUnitIds?.includes(u.id)) for (const id of u.nodeIds) out.add(id);
+		return out;
+	}, [units, finishedUnitIds]);
 	// Pad only the full-extent render — the plan window's override viewBox is
 	// a deliberate viewport crop, and the popup keeps its own fit margins.
 	const pad = viewBoxOverride ? 0 : (padUnits ?? 0);
@@ -412,6 +430,22 @@ export function PlanDiagram({
 					<feGaussianBlur stdDeviation={GLOW_BLUR} />
 				</filter>
 			</defs>
+			{layout.clusters.map((c) => (
+				<g key={`unit-${c.id}`} className={finishedUnitIds?.includes(c.id) ? "opacity-40" : undefined} data-testid={`plan-unit-${c.id}`}>
+					<rect
+						x={c.x}
+						y={c.y}
+						width={c.w}
+						height={c.h}
+						rx={8}
+						className={c.id === currentUnitId ? "fill-none stroke-line-strong" : "fill-none stroke-border"}
+						strokeWidth={STROKE_W}
+					/>
+					<text x={c.x + 8} y={c.y + 12} fontSize={10} className="fill-muted-foreground">
+						{c.title}
+					</text>
+				</g>
+			))}
 			{edges.map((e) => {
 				// Dagre's route for this edge: border-intersected waypoints —
 				// the line leaves/enters nodes on whatever side dagre chose
@@ -461,6 +495,7 @@ export function PlanDiagram({
 						transform={`translate(${layout.x.get(n.id) ?? 0}, ${layout.y.get(n.id) ?? 0})`}
 						data-testid={`plan-node-${n.id}`}
 						data-status={status}
+						className={mutedNodes.has(n.id) ? "opacity-40" : undefined}
 					>
 						{/* Rectangular — no corner rounding (owner). */}
 						<rect
@@ -516,7 +551,7 @@ export function PlanBlock({ data, onOpen }: { data: PlanBlockData; onOpen: () =>
 	const markerId = useId().replace(/[^a-zA-Z0-9-]/g, "");
 	const statusMap = useMemo(() => new Map(data.nodes.map((n) => [n.id, n.status] as const)), [data]);
 	const statusOf = (id: string): PlanNodeStatus => statusMap.get(id) ?? "upcoming";
-	const plan = usePlanLayout(data);
+	const plan = usePlanLayout(data, data.units);
 	const { appearance } = useAppearance();
 	return (
 		<Hint label="Open the full plan" side="bottom">
@@ -534,6 +569,7 @@ export function PlanBlock({ data, onOpen }: { data: PlanBlockData; onOpen: () =>
 			layout={plan.layout}
 			nodes={data.nodes}
 			edges={data.edges}
+			units={data.units}
 			statusOf={statusOf}
 			markerId={markerId}
 			pad={GRAPH_PAD}
@@ -589,8 +625,16 @@ const POPUP_PAD = GLOW_REACH;
  * territory. Surface 80% + blur (owner decision): the transcript ghosts
  * through while the focus owns the session area.
  */
-export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessage[]; onClose: () => void }) {
+export function PlanPopup({ messages, nativeMessages, onClose }: { messages: readonly PopupMessage[]; nativeMessages?: readonly LhMessage[]; onClose: () => void }) {
 	const tree = useMemo(() => latestTree(messages), [messages]);
+	// Unit state (plan 001 part 8) derives from the native record: finished
+	// units mute, the current unit's box takes the emphasis stroke.
+	const finished = useMemo(() => (nativeMessages ? finishedUnitIds(nativeMessages) : []), [nativeMessages]);
+	const currentUnitId = useMemo(() => {
+		if (!tree?.units || !nativeMessages) return null;
+		const index = currentUnitIndex(tree, nativeMessages);
+		return index === null ? null : (tree.units[index]?.id ?? null);
+	}, [tree, nativeMessages]);
 	const statuses = useMemo(
 		() => (tree ? derivePlanStatuses(tree, messages as Parameters<typeof derivePlanStatuses>[1]) : null),
 		[tree, messages],
@@ -616,7 +660,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 
 	// ONE layout for both the fit math and the drawing — measured once, so
 	// the zoom-to-fit frames exactly the boxes on screen.
-	const plan = usePlanLayout(tree);
+	const plan = usePlanLayout(tree, tree?.units);
 	const { layout } = plan;
 	// The fit box is the PADDED ink box — the diagram renders with POPUP_PAD
 	// (= the glow's reach) so the blurred glow never clips at the frame, and
@@ -774,6 +818,9 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 								layout={plan.layout}
 								nodes={tree.nodes}
 								edges={tree.edges}
+								units={tree.units}
+								finishedUnitIds={finished}
+								currentUnitId={currentUnitId}
 								statusOf={statusOf}
 								glowId={statuses?.current ?? null}
 								markerId={markerId}

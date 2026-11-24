@@ -55,7 +55,7 @@ import { sideChats, type SideChatService } from "./side-chat.ts";
 import { SIDE_CONTEXT_BUDGET_ERROR, sideBudgetRetryDrops, sideContextWindow } from "./side-context-budget.ts";
 import { registerTurn, rememberTurnFailure, unregisterTurn } from "./turn-runs.ts";
 import { persistTurn, triggerExtraction, TurnPersistenceError } from "./turn-service.ts";
-import { hasProbeDone, hasUnresolvedQuestion, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
+import { hasProbeDone, hasUnresolvedQuestion, newUnitsNoteMessage, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
 import { samePluginQuestionOccurrence } from "../core/plugin-questions.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
 import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight } from "./compaction.ts";
@@ -576,6 +576,14 @@ export async function handleChatInput(
 	// refusal. This snapshot does not authorize the final assembled request;
 	// SDK preparation re-collects live text and validates queued steering too.
 	const sideContextSnapshots = sideContext.snapshot(chatId);
+	// Plan 001 part 6: a teaching lesson whose plan has no units gets the
+	// one-time grouping note in the same write-ahead as the turn's input.
+	if (
+		appends.length > 0 && input.type !== "retry" && record.kind !== "practice"
+		&& hasProbeDone(record.messages)
+		&& record.tree && record.tree.nodes.length >= 1 && !record.tree.units
+		&& !record.messages.some((m) => m.role === "custom" && m.customType === "units-note")
+	) appends = [...appends, newUnitsNoteMessage()];
 	const afterInput = [...record.messages, ...appends];
 	const sideQuestions = hasUnresolvedQuestion(afterInput) ? [] : sideConversationEntries({
 		messages: record.messages, sideChats: sideContextSnapshots,

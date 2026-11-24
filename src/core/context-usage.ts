@@ -1,4 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { isContextCut } from "./compaction.ts";
 import type { LhMessage } from "./native-messages.ts";
 
 /** Latest completed conversation measurement, never a request-size estimate.
@@ -12,7 +13,7 @@ export function measuredContextTokens(
 ): number | null {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i]!;
-		if (message.role === "custom" && message.customType === "compaction") return null;
+		if (isContextCut(message)) return null;
 		if (message.role !== "assistant" || incompleteIds.has(message.id)) continue;
 		const assistant = message as AssistantMessage;
 		if (!["stop", "length", "toolUse"].includes(assistant.stopReason)) continue;

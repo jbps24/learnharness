@@ -43,7 +43,7 @@ export class PluginQuestionLedger {
 	readonly tools: AgentTool<any>[];
 
 	constructor(contributions: readonly NativePluginQuestionContribution[], private readonly chatId: string,
-		private readonly nodeExists?: (nodeId: string) => boolean) {
+		private readonly tagProblem?: (nodeId: string) => string | null) {
 		this.tools = contributions.map(contribution => {
 			const { definition, variant } = contribution;
 			const spec = definition[variant]!;
@@ -59,8 +59,10 @@ export class PluginQuestionLedger {
 					this.validatedCalls.delete(input as object);
 					const accepted = validatePluginQuestionInput(definition, { chatId: this.chatId, variant, input });
 					if (!accepted.ok) return invalidInputResult(spec.toolName, accepted.problems);
-					if (variant === "teach" && (!accepted.value.nodeId || !this.nodeExists?.(accepted.value.nodeId)))
-						return invalidInputResult(spec.toolName, ["nodeId must identify a live node in this session's plan map."]);
+					if (variant === "teach") {
+						const problem = accepted.value.nodeId && this.tagProblem ? this.tagProblem(accepted.value.nodeId) : "nodeId must identify a live node in this session's plan map.";
+						if (problem) return invalidInputResult(spec.toolName, [problem]);
+					}
 					contribution.requireActive();
 					call.epoch.poses.set(call.index, { questionId: crypto.randomUUID(), input: accepted.value, contribution });
 					const ack = { ...questionResult(), details: {} };

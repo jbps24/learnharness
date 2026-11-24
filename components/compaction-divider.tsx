@@ -46,3 +46,22 @@ export function CompactionCutDivider({ data }: { data: CompactionDividerData }) 
 		</div>
 	);
 }
+
+export interface UnitCutDividerData {
+	unitIndex: number;
+	title: string;
+}
+
+/** The unit cut divider (plan 001 part 8): same geometry as the compaction
+ *  cut, marking where a new unit of the lesson begins. Inert. */
+export function UnitCutDivider({ data }: { data: UnitCutDividerData }) {
+	return (
+		<div data-testid="unit-cut-divider" className="my-4 flex w-full items-center gap-3">
+			<span className="h-0 flex-1 border-t-2 border-dotted border-border/50" aria-hidden />
+			<span className="rounded-full border border-border/80 px-2.5 py-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+				{`Unit ${data.unitIndex} · ${data.title}`}
+			</span>
+			<span className="h-0 flex-1 border-t-2 border-dotted border-border/50" aria-hidden />
+		</div>
+	);
+}

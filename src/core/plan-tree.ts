@@ -1,4 +1,4 @@
-import type { PlanEdge, PlanNode, PlanTree } from "./contracts.ts";
+import type { PlanEdge, PlanNode, PlanTree, PlanUnit } from "./contracts.ts";
 
 /**
  * Pure, validated plan-tree operations (vision §2 "the formal plan tree").
@@ -106,10 +106,49 @@ function assertValidEdge(from: string, to: string, nodes: PlanNode[], existingEd
 	}
 }
 
+const UNIT_SLUG_RE = /^[a-z0-9]+([_-][a-z0-9]+)*$/;
+
+/** Unit invariants (plan 001 part 1): ids, titles, exact one-unit membership, prerequisite order. */
+function assertValidUnits(units: PlanUnit[], nodes: Map<string, PlanNode>, edges: PlanEdge[]): void {
+	const unitOf = new Map<string, number>();
+	const seen = new Set<string>();
+	units.forEach((u, index) => {
+		if (typeof u.id !== "string" || !UNIT_SLUG_RE.test(u.id)) {
+			throw new PlanTreeError(`Unit id "${u.id}" must be a lowercase slug (a-z, 0-9, joined by hyphens or underscores).`);
+		}
+		if (seen.has(u.id)) throw new PlanTreeError(`Duplicate unit id "${u.id}" — unit ids must be unique.`);
+		seen.add(u.id);
+		if (nodes.has(u.id)) throw new PlanTreeError(`Unit id "${u.id}" is also a node id — ids must be distinct.`);
+		if (typeof u.title !== "string" || u.title.trim() === "") {
+			throw new PlanTreeError(`Unit "${u.id}" needs a non-empty \`title\`.`);
+		}
+		for (const nodeId of u.nodeIds) {
+			if (!nodes.has(nodeId)) throw new PlanTreeError(`Unit "${u.id}" references unknown node id "${nodeId}".`);
+			if (unitOf.has(nodeId)) {
+				throw new PlanTreeError(`Node "${nodeId}" is in more than one unit — a node belongs to exactly one unit.`);
+			}
+			unitOf.set(nodeId, index);
+		}
+	});
+	const missing = [...nodes.keys()].filter((id) => !unitOf.has(id));
+	if (missing.length > 0) {
+		throw new PlanTreeError(`Nodes outside any unit: ${missing.join(", ")} — when the plan has units, every node must be inside one.`);
+	}
+	for (const e of edges) {
+		const uf = unitOf.get(e.from)!;
+		const ut = unitOf.get(e.to)!;
+		if (uf > ut) {
+			throw new PlanTreeError(
+				`Edge "${e.from}" → "${e.to}": the prerequisite is in a later unit ("${units[uf]!.id}" comes after "${units[ut]!.id}") — move it to the same or an earlier unit.`,
+			);
+		}
+	}
+}
+
 // ─── ops ─────────────────────────────────────────────────────────────────────
 
 /** Build a fresh tree (version 1) from node and edge lists, validating all invariants. */
-export function createTree(nodes: PlanNode[], edges: PlanEdge[]): PlanTree {
+export function createTree(nodes: PlanNode[], edges: PlanEdge[], units?: PlanUnit[]): PlanTree {
 	const map = nodeMap(nodes);
 	for (const e of edges) {
 		requireNode(map, e.from, "Edge `from`");
@@ -122,7 +161,12 @@ export function createTree(nodes: PlanNode[], edges: PlanEdge[]): PlanTree {
 		assertValidEdge(e.from, e.to, nodes, accepted);
 		accepted.push({ from: e.from, to: e.to });
 	}
-	return { nodes: nodes.map((n) => ({ ...n })), edges: accepted, version: 1 };
+	const tree: PlanTree = { nodes: nodes.map((n) => ({ ...n })), edges: accepted, version: 1 };
+	if (units) {
+		assertValidUnits(units, map, accepted);
+		tree.units = units.map((u) => ({ ...u, nodeIds: [...u.nodeIds] }));
+	}
+	return tree;
 }
 
 // The per-node mutation ops (addNode/updateNode/removeNode/addEdge/removeEdge/

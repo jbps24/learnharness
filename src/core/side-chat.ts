@@ -38,6 +38,7 @@ import {
 	userFacingTextOf,
 } from "./native-messages.ts";
 import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
+import { newestLessonRecord } from "./units.ts";
 import { citationsToReadableText, collectCitations } from "./citations.ts";
 import { messageMarkdown } from "./session-markdown.ts";
 import { answeredOptionLetters } from "./answer-presentation.ts";
@@ -458,13 +459,15 @@ export function sideChatLessonDocument(messages: readonly LhMessage[]): string {
 	const blocks: string[] = [];
 	let start = 0;
 	const marker = activeCompactionOf(messages);
-	if (marker) {
-		const kept = keptIndexFor(messages, marker);
-		if (kept >= 0) {
-			start = kept;
-			// A model-private summary may contain the open assessment's key.
-			blocks.push("### Earlier session history\n\nEarlier history is omitted after compaction; its private summary is not supplied to the helper.");
-		}
+	const record = newestLessonRecord(messages);
+	// The newest cut of either kind (a unit cut or a compaction) starts the document.
+	const compactionKept = marker ? keptIndexFor(messages, marker) : -1;
+	const recordKept = record ? messages.findIndex((m) => m.id === record.details.firstKeptMessageId) : -1;
+	const kept = Math.max(compactionKept, recordKept);
+	if (kept >= 0) {
+		start = kept;
+		// A model-private summary or record may contain the open assessment's key.
+		blocks.push("### Earlier session history\n\nEarlier history is omitted after compaction; its private summary is not supplied to the helper.");
 	}
 	const calls = new Map<string, { name: string; args: Record<string, unknown> | undefined }>();
 	const answeredInputs = new Map<ToolResultMessage, Record<string, unknown>>();

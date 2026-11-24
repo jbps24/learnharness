@@ -47,6 +47,7 @@ export * from "./math-delims.ts";
 export * from "./native-messages.ts";
 export { copyImmutableData } from "./immutable-data.ts";
 export * from "./compaction.ts";
+export { currentUnitIndex, finishedUnitIds } from "./units.ts";
 export * from "./input-events.ts";
 export { parseFilePaths, quoteFilePath, filePathLabel, isDirectoryReference, directoryReferencePath } from "./file-paths.ts";
 export type { FilePathPart } from "./file-paths.ts";
