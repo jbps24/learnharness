@@ -299,6 +299,36 @@ describe("BreakDivider", () => {
 		assert.ok(html.includes("Take 10 min"), html);
 		assert.ok(!html.includes("Take 5 min"), html);
 	});
+
+	// plan 011 part 3: standard offer Skip button reads "Skip" and Take is unchanged
+	it("renders Skip for a standard offered break", () => {
+		const html = renderToStaticMarkup(
+			<BreakDivider
+				data={{ toolCallId: "brk_1", state: "offered" }}
+				busy={false}
+				onTake={() => {}}
+				onSkip={() => {}}
+			/>,
+		);
+		assert.ok(html.includes(">Skip<"), html);
+		assert.ok(!html.includes("Answer it first"), html);
+		assert.ok(html.includes("Take 10 min"), html);
+	});
+
+	// plan 011 part 3: for an offer with oneMoreQuestion, the Skip button reads "Answer it first" (Take unchanged)
+	it("renders Answer it first instead of Skip when oneMoreQuestion is true", () => {
+		const html = renderToStaticMarkup(
+			<BreakDivider
+				data={{ toolCallId: "brk_1", state: "offered", oneMoreQuestion: true }}
+				busy={false}
+				onTake={() => {}}
+				onSkip={() => {}}
+			/>,
+		);
+		assert.ok(html.includes("Answer it first"), html);
+		assert.ok(!html.includes(">Skip<"), html);
+		assert.ok(html.includes("Take 10 min"), html);
+	});
 });
 
 describe("BreakScreen", () => {

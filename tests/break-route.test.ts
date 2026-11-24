@@ -331,4 +331,191 @@ describe("POST /api/chats/[id]/break", () => {
 			piModels().deleteProvider(providerId);
 		}
 	});
+
+	// plan 011 part 2: skip of a one-more-question offer appends break-skipped with details.oneMoreQuestion: true and starts one teacher turn carrying the break-note; plain skip starts no turn
+	it("starts one teacher turn with break-note on skip of one-more-question offer, and no turn on plain skip", async () => {
+		const { piModels } = await import("../src/agent/models.ts");
+		const { isTurnRunning } = await import("../src/server/turn-liveness.ts");
+		const faux = createFauxCore({ tokenSize: { min: 64, max: 64 } });
+		const baseModel = faux.getModel();
+		const providerId = "faux-break-one-more-route";
+		const modelId = "faux-teacher-model";
+		let calls = 0;
+		const streamFn: StreamFunction<Api, SimpleStreamOptions> = (_model, context, options) => {
+			calls++;
+			return faux.streamSimple(baseModel, context, options);
+		};
+		faux.setResponses([fauxAssistantMessage("Here is the remaining question.")]);
+		piModels().setProvider(
+			createProvider({
+				id: providerId,
+				name: "Faux Break One More",
+				auth: { apiKey: { name: "Faux key", resolve: async () => ({ auth: {}, source: "test" }) } },
+				models: [{ ...baseModel, id: modelId, provider: providerId }],
+				api: { stream: streamFn, streamSimple: streamFn },
+			}),
+		);
+
+		const probeDoneMessages = (now: number): LhMessage[] => [
+			{
+				id: "a_probe_done",
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call_pd", name: "probe_done", arguments: {} }],
+				stopReason: "toolUse",
+				timestamp: now - 4 * MIN,
+			} as unknown as LhMessage,
+			{
+				id: "r_probe_done",
+				role: "toolResult",
+				toolCallId: "call_pd",
+				toolName: "probe_done",
+				content: [{ type: "text", text: "ok" }],
+				details: { ok: true },
+				isError: false,
+				timestamp: now - 4 * MIN + 1,
+			} as unknown as LhMessage,
+		];
+
+		const oneMoreOfferMessages = (callId: string, now = Date.now()): LhMessage[] => [
+			{ ...newUserMessage("hi"), id: "u1", timestamp: now - 5 * MIN },
+			...probeDoneMessages(now),
+			{
+				id: `a_${callId}`,
+				role: "assistant",
+				content: [{ type: "toolCall", id: callId, name: "suggest_break", arguments: { requestedBy: "window", oneMoreQuestion: true } }],
+				stopReason: "toolUse",
+				timestamp: now - 1000,
+			} as never,
+			{
+				id: `r_${callId}`,
+				role: "toolResult",
+				toolCallId: callId,
+				toolName: "suggest_break",
+				content: [{ type: "text", text: "ok" }],
+				details: { ok: true, requestedBy: "window", oneMoreQuestion: true },
+				isError: false,
+				timestamp: now - 500,
+			} as never,
+		];
+
+		const expectedNoteText =
+			'[Session note] The learner wants to answer the one remaining question of this node before the break. Pose it now. After their answer, give one line of feedback and suggest the break (requestedBy "window").';
+
+		try {
+			// Plain skip starts no turn
+			const plainChat = stores.chatStore.createChat("Plain skip");
+			stores.chatStore.saveSettings(plainChat.id, { model: { provider: providerId, id: modelId } });
+			stores.chatStore.saveMessages(plainChat.id, [{ ...newUserMessage("hi"), id: "u0", timestamp: Date.now() - 5 * MIN }, ...probeDoneMessages(Date.now()), ...pendingOfferMessages("call_plain_skip").slice(1)]);
+
+			const plainRes = await postBreak(plainChat.id, { input: { type: "skip", toolCallId: "call_plain_skip" } });
+			assert.equal(plainRes.status, 200);
+			await new Promise((r) => setTimeout(r, 30));
+			assert.equal(calls, 0);
+			const plainSaved = stores.chatStore.getChat(plainChat.id)!;
+			const plainSkipped = plainSaved.messages.filter((m): m is LhMarkerMessage => m.role === "custom" && m.customType === "break-skipped");
+			assert.equal(plainSkipped.length, 1);
+			assert.equal((plainSkipped[0]!.details as { oneMoreQuestion?: unknown }).oneMoreQuestion, undefined);
+			assert.equal(plainSaved.messages.some((m) => m.role === "custom" && m.customType === "break-note"), false);
+
+			// One-more-question skip appends marker with flag and starts one teacher turn carrying the break-note
+			const oneMoreChat = stores.chatStore.createChat("One more skip");
+			stores.chatStore.saveSettings(oneMoreChat.id, { model: { provider: providerId, id: modelId } });
+			stores.chatStore.saveMessages(oneMoreChat.id, oneMoreOfferMessages("call_one_more"));
+
+			const res = await postBreak(oneMoreChat.id, { input: { type: "skip", toolCallId: "call_one_more" } });
+			assert.equal(res.status, 200);
+			assert.deepEqual(await res.json(), { ok: true });
+
+			const deadline = Date.now() + 2000;
+			while ((calls === 0 || isTurnRunning(oneMoreChat.id)) && Date.now() < deadline) {
+				await new Promise((r) => setTimeout(r, 10));
+			}
+			assert.equal(calls, 1);
+
+			const saved = stores.chatStore.getChat(oneMoreChat.id)!;
+			const skipped = saved.messages.filter((m): m is LhMarkerMessage => m.role === "custom" && m.customType === "break-skipped");
+			assert.equal(skipped.length, 1);
+			assert.deepEqual(skipped[0]!.details, { toolCallId: "call_one_more", oneMoreQuestion: true });
+
+			const notes = saved.messages.filter(
+				(m): m is LhMarkerMessage =>
+					m.role === "custom" && m.customType === "break-note" && (m.details as { kind?: unknown } | null)?.kind === "one-more-question",
+			);
+			assert.equal(notes.length, 1);
+			assert.equal(notes[0]!.display, false);
+			assert.equal(notes[0]!.content, expectedNoteText);
+		} finally {
+			piModels().deleteProvider(providerId);
+		}
+	});
+
+	// plan 011 part 2: skip of a one-more-question offer returns 409 while a turn is running
+	it("returns 409 on skip of a one-more-question offer while a turn is running", async () => {
+		const chat = stores.chatStore.createChat("Running turn one more");
+		const now = Date.now();
+		stores.chatStore.saveMessages(chat.id, [
+			{ ...newUserMessage("hi"), id: "u1", timestamp: now - 5 * MIN },
+			{
+				id: "a_call_om_run",
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call_om_run", name: "suggest_break", arguments: { requestedBy: "window", oneMoreQuestion: true } }],
+				stopReason: "toolUse",
+				timestamp: now - 1000,
+			} as never,
+			{
+				id: "r_call_om_run",
+				role: "toolResult",
+				toolCallId: "call_om_run",
+				toolName: "suggest_break",
+				content: [{ type: "text", text: "ok" }],
+				details: { ok: true, requestedBy: "window", oneMoreQuestion: true },
+				isError: false,
+				timestamp: now - 500,
+			} as never,
+		]);
+		assert.equal(beginTurn(chat.id), true);
+		try {
+			const res = await postBreak(chat.id, { input: { type: "skip", toolCallId: "call_om_run" } });
+			assert.equal(res.status, 409);
+			assert.deepEqual(await res.json(), { error: "A turn is running." });
+		} finally {
+			endTurn(chat.id);
+		}
+	});
+
+	it("propagates handleChatInput failure on skip of a one-more-question offer", async () => {
+		const prevSettings = stores.settingsStore.readSettings();
+		stores.settingsStore.writeSettings({ version: 1 });
+		const chat = stores.chatStore.createChat("Unconfigured model skip");
+		const now = Date.now();
+		stores.chatStore.saveMessages(chat.id, [
+			{ ...newUserMessage("hi"), id: "u1", timestamp: now - 5 * MIN },
+			{
+				id: "a_call_om_err",
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call_om_err", name: "suggest_break", arguments: { requestedBy: "window", oneMoreQuestion: true } }],
+				stopReason: "toolUse",
+				timestamp: now - 1000,
+			} as never,
+			{
+				id: "r_call_om_err",
+				role: "toolResult",
+				toolCallId: "call_om_err",
+				toolName: "suggest_break",
+				content: [{ type: "text", text: "ok" }],
+				details: { ok: true, requestedBy: "window", oneMoreQuestion: true },
+				isError: false,
+				timestamp: now - 500,
+			} as never,
+		]);
+		try {
+			const res = await postBreak(chat.id, { input: { type: "skip", toolCallId: "call_om_err" } });
+			assert.equal(res.ok, false);
+			assert.equal(res.status, 503);
+			const saved = stores.chatStore.getChat(chat.id)!;
+			assert.equal(saved.messages.some((m) => m.role === "custom" && m.customType === "break-skipped"), false);
+		} finally {
+			stores.settingsStore.writeSettings(prevSettings ?? { version: 1 });
+		}
+	});
 });

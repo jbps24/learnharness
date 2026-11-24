@@ -438,7 +438,7 @@ export async function handleChatInput(
 						const updates = sideConversationEntries({ messages: current.messages, sideChats: sideContext.snapshot(chatId) });
 						return updates.length ? [...current.messages, ...updates] : current.messages;
 					}
-					const next = input.type === "steers" ? input.steers.filter((entry) => !steerDelivered(current.messages, entry.id)) : inputAppends(current, input);
+					const next = input.type === "steers" ? input.steers.filter((entry) => !steerDelivered(current.messages, entry.id)) : inputAppends(current, input, Date.now(), effective.breaks);
 					const after = [...current.messages, ...next];
 					if (hasUnresolvedQuestion(after)) return current.messages;
 					const updates = sideConversationEntries({ messages: current.messages, sideChats: sideContext.snapshot(chatId) }, after);
@@ -554,7 +554,7 @@ export async function handleChatInput(
 			} else appends = submission.finish({ id: chatId, kind: record.kind, messages: record.messages });
 		} else appends = input.type === "steers"
 			? input.steers.filter((s) => !steerDelivered(record.messages, s.id))
-			: inputAppends(record, input);
+			: inputAppends(record, input, Date.now(), effective.breaks);
 	} catch (err) {
 		if (err instanceof ChatInputError) {
 			return Response.json({ error: err.message }, { status: 400 });
