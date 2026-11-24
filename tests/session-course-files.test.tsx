@@ -318,8 +318,8 @@ describe("SessionCourseFiles", () => {
 		assert.ok(failedTooltipEl, "Failed chip carries error tooltip");
 	});
 
-	// plan 007 part 7: Below each assigned file, node titles in map order; unresolved conflict shows ⚠ with tooltip "Your tutor will ask which route your course uses."
-	it("renders supplied node titles in map order and marks unresolved conflicts with warning glyph and tooltip", async () => {
+	// plan 009 part 2: Row renders no node titles, renders the ⓘ button (aria-label "Details for <file name>", data-testid="course-file-details"), and marks ⚠ iff an unresolved conflict of one of the file's nodes includes the file
+	it("renders no node titles in the row, renders the info button with aria-label, and marks unresolved conflicts involving the file", async () => {
 		const data: CourseResponse = {
 			material: {
 				files: [
@@ -329,10 +329,11 @@ describe("SessionCourseFiles", () => {
 				methods: [
 					{ nodeId: "n3", path: "/course/a.pdf", method: "Route A3" },
 					{ nodeId: "n1", path: "/course/a.pdf", method: "Route A1" },
+					{ nodeId: "n1", path: "/course/b.pdf", method: "Route B1" },
 					{ nodeId: "n2", path: "/course/b.pdf", method: "Route B2" },
 				],
 				conflicts: [
-					{ nodeId: "n1", paths: ["/course/a.pdf", "/course/b.pdf"] },
+					{ nodeId: "n1", paths: ["/course/a.pdf", "/course/other.pdf"] },
 					{ nodeId: "n3", paths: ["/course/a.pdf", "/course/b.pdf"], chosen: "/course/a.pdf" },
 				],
 			},
@@ -351,15 +352,36 @@ describe("SessionCourseFiles", () => {
 		});
 
 		const text = h.container.textContent ?? "";
-		const alphaIdx = text.indexOf("Alpha Node");
-		const gammaIdx = text.indexOf("Gamma Node");
-		assert.ok(alphaIdx !== -1 && gammaIdx !== -1 && alphaIdx < gammaIdx, "Nodes appear in map order (Alpha before Gamma)");
+		assert.equal(text.includes("Alpha Node"), false, "Row must not render node titles");
+		assert.equal(text.includes("Beta Node"), false, "Row must not render node titles");
+		assert.equal(text.includes("Gamma Node"), false, "Row must not render node titles");
 
-		const conflictMarks = [...h.doc.querySelectorAll("[title]")].filter(
+		const detailButtons = [...h.doc.querySelectorAll('[data-testid="course-file-details"]')];
+		assert.equal(detailButtons.length, 2, "Each row renders an info button");
+		assert.equal(detailButtons[0]!.getAttribute("aria-label"), "Details for a.pdf");
+		assert.equal(detailButtons[1]!.getAttribute("aria-label"), "Details for b.pdf");
+
+		const rows = [...h.doc.querySelectorAll("li")];
+		assert.equal(rows.length, 2);
+		const rowAMarks = [...rows[0]!.querySelectorAll("[title]")].filter(
 			(el) => el.getAttribute("title") === "Your tutor will ask which route your course uses.",
 		);
-		assert.equal(conflictMarks.length, 1, "Only unresolved conflict involving this file shows warning");
-		assert.ok(conflictMarks[0]!.textContent?.includes("⚠"));
+		const rowBMarks = [...rows[1]!.querySelectorAll("[title]")].filter(
+			(el) => el.getAttribute("title") === "Your tutor will ask which route your course uses.",
+		);
+		assert.equal(rowAMarks.length, 1, "Unresolved conflict including a.pdf marks a.pdf row");
+		assert.ok(rowAMarks[0]!.textContent?.includes("⚠"));
+		const order = [...rows[0]!.querySelectorAll("*")];
+		const checkboxAt = order.findIndex((el) => el.tagName === "INPUT");
+		const nameAt = order.findIndex((el) => el.tagName === "BUTTON" && el.textContent?.trim() === "a.pdf");
+		const chipAt = order.findIndex((el) => el.tagName !== "BUTTON" && el.children.length === 0 && el.textContent?.trim() === "assigned");
+		const markAt = order.indexOf(rowAMarks[0]!);
+		const infoAt = order.indexOf(detailButtons[0]!);
+		assert.ok(checkboxAt >= 0 && nameAt > checkboxAt, "Name button follows the checkbox");
+		assert.ok(chipAt > nameAt, "Status chip follows the name button");
+		assert.ok(markAt > chipAt, "⚠ follows the status chip");
+		assert.ok(infoAt > markAt, "ⓘ button comes last, after ⚠");
+		assert.equal(rowBMarks.length, 0, "Resolved conflict and conflict not listing b.pdf do not mark b.pdf row");
 	});
 
 	// plan 007 part 7: Checkbox calls PATCH /api/chats/:id/course optimistically and reverts on failure
@@ -522,5 +544,73 @@ describe("SessionCourseFiles", () => {
 		h.triggerResync();
 		await flush();
 		assert.equal(fetches, 3);
+	});
+
+	// plan 009 part 2: Conflict mark requires unresolved conflict, matching nodeId, and method on the same file
+	it("marks ⚠ only when an unresolved conflict includes the file and the file has a method for that node", async () => {
+		const data: CourseResponse = {
+			material: {
+				files: [
+					{ path: "/course/only-conflicted.pdf", addedAt: "2026-11-22T10:00:00.000Z", via: "learner", binding: true, status: "assigned" },
+					{ path: "/course/resolved-only.pdf", addedAt: "2026-11-22T10:01:00.000Z", via: "learner", binding: true, status: "assigned" },
+					{ path: "/course/no-method.pdf", addedAt: "2026-11-22T10:02:00.000Z", via: "learner", binding: true, status: "assigned" },
+				],
+				methods: [
+					{ nodeId: "n1", path: "/course/only-conflicted.pdf", method: "Route 1" },
+					{ nodeId: "n2", path: "/course/resolved-only.pdf", method: "Route 2" },
+					{ nodeId: "n2", path: "/course/no-method.pdf", method: "Route 2b" },
+				],
+				conflicts: [
+					{ nodeId: "n1", paths: ["/course/only-conflicted.pdf", "/course/no-method.pdf"] },
+					{ nodeId: "n2", paths: ["/course/resolved-only.pdf", "/course/other.pdf"], chosen: "/course/resolved-only.pdf" },
+				],
+			},
+			nodes: [
+				{ id: "n1", title: "Node One" },
+				{ id: "n2", title: "Node Two" },
+			],
+		};
+
+		const h = await mountHarness({
+			fetchImpl: async () => jsonResponse(data),
+		});
+		await act(async () => {
+			findButtonByText(h.doc, "Files (3)").click();
+		});
+
+		const rows = [...h.doc.querySelectorAll("li")];
+		assert.equal(rows.length, 3);
+		const tip = "Your tutor will ask which route your course uses.";
+		const hasMark = (row: Element) => row.querySelector(`[title="${tip}"]`) !== null;
+		assert.equal(hasMark(rows[0]!), true, "Unresolved conflict with matching node method shows ⚠");
+		assert.equal(hasMark(rows[1]!), false, "Resolved conflict does not show ⚠");
+		assert.equal(hasMark(rows[2]!), false, "Conflict for another node without this file's method on that node does not show ⚠");
+	});
+
+	// plan 007 part 7: Unticked rows are dimmed with opacity-50 while ticked rows are not
+	it("dims unticked rows with opacity-50 and leaves ticked rows undimmed", async () => {
+		const data: CourseResponse = {
+			material: {
+				files: [
+					{ path: "/course/ticked.pdf", addedAt: "2026-11-22T10:00:00.000Z", via: "learner", binding: true, status: "assigned" },
+					{ path: "/course/unticked.pdf", addedAt: "2026-11-22T10:01:00.000Z", via: "learner", binding: false, status: "assigned" },
+				],
+				methods: [],
+				conflicts: [],
+			},
+			nodes: [],
+		};
+
+		const h = await mountHarness({
+			fetchImpl: async () => jsonResponse(data),
+		});
+		await act(async () => {
+			findButtonByText(h.doc, "Files (2)").click();
+		});
+
+		const rows = [...h.doc.querySelectorAll("li")];
+		assert.equal(rows.length, 2);
+		assert.equal((rows[0]!.getAttribute("class") ?? "").split(/\s+/).includes("opacity-50"), false, "Ticked row is not dimmed");
+		assert.equal((rows[1]!.getAttribute("class") ?? "").split(/\s+/).includes("opacity-50"), true, "Unticked row is dimmed with opacity-50");
 	});
 });
