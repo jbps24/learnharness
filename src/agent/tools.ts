@@ -417,7 +417,7 @@ export interface TeacherToolContext extends PlanToolContext {
 	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput | PdfInput) => void;
 	/** Retained search-status seam; research dispatch is available keylessly. */
 	searchAvailable?: () => boolean;
-	breaks: () => { enabled: boolean; intervalMinutes: number; lengthMinutes: number };
+	breaks: () => { enabled: boolean; intervalMinutes: number; lengthMinutes: number; resetMinutes: number };
 	now: () => number;
 }
 

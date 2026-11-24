@@ -65,6 +65,7 @@ import type React from "react";
 import {
 	BREAK_INTERVAL_RANGE,
 	BREAK_LENGTH_RANGE,
+	BREAK_RESET_RANGE,
 	COMPACTION_THRESHOLD_FLOOR,
 	MODEL_SLOTS,
 	SEARCH_ENGINES,
@@ -1029,6 +1030,25 @@ export function AgentSection({
 						</SettingsRow>
 					</>
 				)}
+				<SettingsRow
+					label="Reset after inactivity"
+					hint="minutes without activity before the learning clock restarts (5–60)"
+					testid="breaks-row-reset"
+				>
+					<CommitInput
+						type="number"
+						value={String(resolvedBreaks.resetMinutes)}
+						ariaLabel="reset after inactivity"
+						testid="input-breaks-reset"
+						onCommit={(v) => {
+							const n = Number(v);
+							if (v === "" || !Number.isFinite(n)) return false; // bad input: no write
+							const { min, max } = BREAK_RESET_RANGE;
+							const rounded = Math.round(Math.min(max, Math.max(min, n)));
+							return onBreaksChange?.({ ...breaks, resetMinutes: rounded }) ?? false;
+						}}
+					/>
+				</SettingsRow>
 			</SettingsGroup>
 
 			<SettingsGroup label="System prompts" testid="group-prompts">

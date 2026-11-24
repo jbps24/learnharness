@@ -519,11 +519,13 @@ export interface BreakSettings {
 	enabled?: boolean;
 	intervalMinutes?: number;
 	lengthMinutes?: number;
+	resetMinutes?: number;
 }
 
-export const BREAK_DEFAULTS = { enabled: true, intervalMinutes: 45, lengthMinutes: 10 } as const;
+export const BREAK_DEFAULTS = { enabled: true, intervalMinutes: 45, lengthMinutes: 10, resetMinutes: 15 } as const;
 export const BREAK_INTERVAL_RANGE = { min: 20, max: 90, step: 5 } as const;
 export const BREAK_LENGTH_RANGE = { min: 5, max: 20, step: 1 } as const;
+export const BREAK_RESET_RANGE = { min: 5, max: 60, step: 1 } as const;
 
 /** THE record. Every section optional (delta); unknown top-level keys are
  *  preserved verbatim by the sanitizer (forward-compat with newer records). */
@@ -914,6 +916,11 @@ function sanitizeBreaks(raw: Record<string, unknown>): BreakSettings {
 	if (typeof length === "number" && Number.isFinite(length)) {
 		const { min, max } = BREAK_LENGTH_RANGE;
 		out.lengthMinutes = Math.round(Math.min(max, Math.max(min, length)));
+	}
+	const reset = raw.resetMinutes;
+	if (typeof reset === "number" && Number.isFinite(reset)) {
+		const { min, max } = BREAK_RESET_RANGE;
+		out.resetMinutes = Math.round(Math.min(max, Math.max(min, reset)));
 	}
 	return out;
 }

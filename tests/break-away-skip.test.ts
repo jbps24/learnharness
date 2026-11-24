@@ -13,7 +13,7 @@ import {
 
 const MIN = 60_000;
 const SEC = 1_000;
-const TIMINGS = breakTimings({ intervalMinutes: 45, lengthMinutes: 10 });
+const TIMINGS = breakTimings({ intervalMinutes: 45, lengthMinutes: 10, resetMinutes: 10 });
 const T0 = 1_700_000_000_000;
 
 function offerAt30Min(callId = "call_1"): { messages: LhMessage[]; activityEnd: number } {

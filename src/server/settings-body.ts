@@ -29,7 +29,7 @@ import type {
 	ModelSlot,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { BACKGROUND_MODEL_ROLES, BREAK_INTERVAL_RANGE, BREAK_LENGTH_RANGE, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isTranscriptMaxWidth, MODEL_SLOTS, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
+import { BACKGROUND_MODEL_ROLES, BREAK_INTERVAL_RANGE, BREAK_LENGTH_RANGE, BREAK_RESET_RANGE, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isTranscriptMaxWidth, MODEL_SLOTS, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 import { isSearchEngineId, SEARCH_ENGINES } from "../core/search.ts";
 import { isDictationLanguage } from "../core/dictation.ts";
@@ -461,9 +461,10 @@ export function parseCompactionSettingsBody(body: unknown): SettingsBodyResult<C
 	return { ok: true, settings };
 }
 
-/** breaks: { enabled?, intervalMinutes?, lengthMinutes? }. Strict write side:
+/** breaks: { enabled?, intervalMinutes?, lengthMinutes?, resetMinutes? }. Strict write side:
  *  the interval is a whole multiple of its step inside its range, the length
- *  a whole number inside its range (the read side clamps, this rejects). */
+ *  and the reset after inactivity whole numbers inside their ranges (the read
+ *  side clamps, this rejects). */
 export function parseBreaksSettingsBody(body: unknown): SettingsBodyResult<BreakSettings> {
 	const raw = asRecord(body);
 	if (!raw) return { ok: false, error: "Invalid JSON body" };
@@ -491,6 +492,13 @@ export function parseBreaksSettingsBody(body: unknown): SettingsBodyResult<Break
 			return { ok: false, error: "lengthMinutes must be an integer between 5 and 20" };
 		}
 		settings.lengthMinutes = v;
+	}
+	if (raw.resetMinutes !== undefined) {
+		const v = raw.resetMinutes;
+		if (typeof v !== "number" || !Number.isInteger(v) || v < BREAK_RESET_RANGE.min || v > BREAK_RESET_RANGE.max) {
+			return { ok: false, error: "resetMinutes must be an integer between 5 and 60" };
+		}
+		settings.resetMinutes = v;
 	}
 	return { ok: true, settings };
 }

@@ -15,7 +15,7 @@ import type { SideChatThread } from "../src/core/contracts/chat.ts";
 
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
-const TIMINGS = breakTimings({ intervalMinutes: 45, lengthMinutes: 10 });
+const TIMINGS = breakTimings({ intervalMinutes: 45, lengthMinutes: 10, resetMinutes: 10 });
 
 const WINDOW_TEXT =
 	'[Session note] The learner has been learning for about 45 minutes. At the next closed point, suggest a short break: say so in one line, then call suggest_break with requestedBy "window" and end your turn. A closed point is a node end (its check answered correctly, no repair pending) or, better, a unit end; if the current node is the last of its unit, wait for the unit end. Never break mid-step or during a repair.';
@@ -451,7 +451,7 @@ describe("breakNotesFor", () => {
 
 	// plan 002 part 2: away and window together, in that order
 	it("emits away and window together in that order when both are due", () => {
-		const zeroInterval = breakTimings({ intervalMinutes: 0, lengthMinutes: 10 });
+		const zeroInterval = breakTimings({ intervalMinutes: 0, lengthMinutes: 10, resetMinutes: 10 });
 		const msgs = [...probeDoneMessages(0)];
 		const notes = breakNotesFor(msgs, undefined, zeroInterval, true, 15 * MIN);
 		assert.equal(notes.length, 2);

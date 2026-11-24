@@ -13,7 +13,8 @@ import { breakTimings } from "../src/core/breaks.ts";
 describe("break settings constants", () => {
 	// plan 002 part 1: BREAK_DEFAULTS and bounds constants
 	it("exports BREAK_DEFAULTS, BREAK_INTERVAL_RANGE, and BREAK_LENGTH_RANGE with plan values", () => {
-		assert.deepEqual(BREAK_DEFAULTS, { enabled: true, intervalMinutes: 45, lengthMinutes: 10 });
+		// plan 004 part 1: BREAK_DEFAULTS gains resetMinutes: 15
+		assert.deepEqual(BREAK_DEFAULTS, { enabled: true, intervalMinutes: 45, lengthMinutes: 10, resetMinutes: 15 });
 		assert.deepEqual(BREAK_INTERVAL_RANGE, { min: 20, max: 90, step: 5 });
 		assert.deepEqual(BREAK_LENGTH_RANGE, { min: 5, max: 20, step: 1 });
 	});
@@ -80,10 +81,12 @@ describe("sanitizeUserSettings breaks", () => {
 describe("resolveSettings breaks", () => {
 	// plan 002 part 1: resolveSettings(null).breaks equals { enabled: true, intervalMinutes: 45, lengthMinutes: 10 }
 	it("resolves null record to BREAK_DEFAULTS", () => {
+		// plan 004 part 1: resolved breaks gain resetMinutes, default 15
 		assert.deepEqual(resolveSettings(null).breaks, {
 			enabled: true,
 			intervalMinutes: 45,
 			lengthMinutes: 10,
+			resetMinutes: 15,
 		});
 	});
 
@@ -93,28 +96,32 @@ describe("resolveSettings breaks", () => {
 			enabled: true,
 			intervalMinutes: 45,
 			lengthMinutes: 10,
+			resetMinutes: 15,
 		});
 		assert.deepEqual(resolveSettings({ version: 1, breaks: {} }).breaks, {
 			enabled: true,
 			intervalMinutes: 45,
 			lengthMinutes: 10,
+			resetMinutes: 15,
 		});
 		assert.deepEqual(resolveSettings({ version: 1, breaks: { enabled: false } }).breaks, {
 			enabled: false,
 			intervalMinutes: 45,
 			lengthMinutes: 10,
+			resetMinutes: 15,
 		});
 		assert.deepEqual(resolveSettings({ version: 1, breaks: { intervalMinutes: 60 } }).breaks, {
 			enabled: true,
 			intervalMinutes: 60,
 			lengthMinutes: 10,
+			resetMinutes: 15,
 		});
 		assert.deepEqual(
 			resolveSettings({
 				version: 1,
 				breaks: { enabled: false, intervalMinutes: 30, lengthMinutes: 15 },
 			}).breaks,
-			{ enabled: false, intervalMinutes: 30, lengthMinutes: 15 },
+			{ enabled: false, intervalMinutes: 30, lengthMinutes: 15, resetMinutes: 15 },
 		);
 	});
 });
@@ -124,9 +131,10 @@ describe("breakTimings", () => {
 
 	// plan 002 part 1: breakTimings({ intervalMinutes: 45, lengthMinutes: 10 }) gives lead 5, escalate 20, reoffer 20 (min); lengthMs = 600 000 at 10
 	it("computes timings at default 45/10", () => {
-		assert.deepEqual(breakTimings({ intervalMinutes: 45, lengthMinutes: 10 }), {
+		assert.deepEqual(breakTimings({ intervalMinutes: 45, lengthMinutes: 10, resetMinutes: 10 }), {
 			intervalMs: 45 * MIN,
 			lengthMs: 600_000,
+			resetMs: 10 * MIN,
 			leadMs: 5 * MIN,
 			escalateMs: 20 * MIN,
 			reofferMs: 20 * MIN,
@@ -135,9 +143,10 @@ describe("breakTimings", () => {
 
 	// plan 002 part 1: At 20 -> 2/9/9
 	it("computes timings at minimum interval 20", () => {
-		assert.deepEqual(breakTimings({ intervalMinutes: 20, lengthMinutes: 5 }), {
+		assert.deepEqual(breakTimings({ intervalMinutes: 20, lengthMinutes: 5, resetMinutes: 5 }), {
 			intervalMs: 20 * MIN,
 			lengthMs: 5 * MIN,
+			resetMs: 5 * MIN,
 			leadMs: 2 * MIN,
 			escalateMs: 9 * MIN,
 			reofferMs: 9 * MIN,
@@ -146,9 +155,10 @@ describe("breakTimings", () => {
 
 	// plan 002 part 1: At 90 -> 10/40/40
 	it("computes timings at maximum interval 90", () => {
-		assert.deepEqual(breakTimings({ intervalMinutes: 90, lengthMinutes: 20 }), {
+		assert.deepEqual(breakTimings({ intervalMinutes: 90, lengthMinutes: 20, resetMinutes: 20 }), {
 			intervalMs: 90 * MIN,
 			lengthMs: 20 * MIN,
+			resetMs: 20 * MIN,
 			leadMs: 10 * MIN,
 			escalateMs: 40 * MIN,
 			reofferMs: 40 * MIN,

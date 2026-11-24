@@ -203,7 +203,7 @@ describe("createTeacherTools breaks & now", () => {
 			messages,
 		});
 		const jobStore = {} as unknown as JobStore;
-		const breaks = () => ({ enabled: true, intervalMinutes: 30, lengthMinutes: 7 });
+		const breaks = () => ({ enabled: true, intervalMinutes: 30, lengthMinutes: 7, resetMinutes: 7 });
 
 		// 6 min after activityEnd (< 7 min lengthMinutes): window stays open.
 		const beforeReset = createTeacherTools({
