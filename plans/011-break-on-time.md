@@ -75,7 +75,7 @@ Unchanged: the learner can ask for a break any time; the interval, length and re
 
 | Part | Status |
 |---|---|
-| 1 Core: timings, window, skips, escalation | not started |
-| 2 Tool, skip route, the turn after "Answer it first" | not started |
-| 3 Note texts, doctrine, divider label | not started |
-| 4 Docs, build, install | not started |
+| 1 Core: timings, window, skips, escalation | green, build-review/20261124-010845-011-part-1; ruled test fix build-review/20261124-013243-011-part-1 |
+| 2 Tool, skip route, the turn after "Answer it first" | green, build-review/20261124-014313-011-part-2 |
+| 3 Note texts, doctrine, divider label | green, build-review/20261124-021204-011-part-3 |
+| 4 Docs, build, install | green, build-review/20261124-023543-011-part-4; build and install pending (owner quits the app first) |

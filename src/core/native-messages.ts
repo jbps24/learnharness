@@ -456,7 +456,7 @@ export function newExamPatternNoteMessage(text: string, digest: string): LhMarke
 /** A break session note (plan 002 part 2). Wire-only: the view renders
  *  nothing for it. A fresh window note's windowId is its own id. */
 export function newBreakNoteMessage(
-	kind: "window" | "escalation" | "away",
+	kind: "window" | "escalation" | "away" | "one-more-question",
 	text: string,
 	windowId?: string,
 	now: number = Date.now(),
@@ -487,14 +487,14 @@ export function newBreakTakenMessage(toolCallId: string, lengthMinutes: number, 
 }
 
 /** The learner declined the suggested break. UI-only: toLlmMessages filters it. */
-export function newBreakSkippedMessage(toolCallId: string, now: number = Date.now()): LhMarkerMessage {
+export function newBreakSkippedMessage(toolCallId: string, now: number = Date.now(), oneMoreQuestion = false): LhMarkerMessage {
 	return {
 		id: newMessageId(),
 		role: "custom",
 		customType: "break-skipped",
 		content: "",
 		display: true,
-		details: { toolCallId },
+		details: oneMoreQuestion ? { toolCallId, oneMoreQuestion: true } : { toolCallId },
 		timestamp: now,
 	};
 }

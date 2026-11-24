@@ -36,7 +36,7 @@ The time a learner has spent in a teaching lesson since the clock last reset, co
 _Avoid_: Session time, screen time
 
 **Break interval**:
-The learning time around which a break is aimed: 45 minutes unless the learner changes it. The break window opens shortly before it, so breaks land around it rather than always after.
+The learning time at which a break is due: 45 minutes unless the learner changes it. The break window opens when learning time reaches it.
 _Avoid_: Break timer
 
 **Break length**:
@@ -47,15 +47,19 @@ _Avoid_: Break duration, pause length
 The gap without learner activity after which the learning clock restarts and the learner counts as away: 15 minutes unless the learner changes it. A learner-triggered answer still running counts as activity; the gap starts when it ends.
 
 **Break window**:
-The stretch of a teaching lesson in which a break is due: the app opens it shortly before learning time reaches the break interval, and it closes when the teacher makes a break suggestion or the learning clock resets.
+The stretch of a teaching lesson in which a break is due: the app opens it when learning time reaches the break interval, and it closes when the teacher makes a break suggestion or the learning clock resets.
 _Avoid_: Break timer, pause window
 
 **Break suggestion**:
-The teacher's offer of a short break, made at a closed point it picks inside a break window, or at any time the learner asks for a break. It is never forced.
+The teacher's offer of a short break, made in the next teacher turn once a break window is open, mid-node included, or at any time the learner asks for a break. It is never forced.
 _Avoid_: Forced pause, break prompt
 
+**One-more-question offer**:
+A break suggestion that first offers the one question left to close the node. Skip then reads "Answer it first": the teacher poses that question, and the break window comes back with the answer to it.
+_Avoid_: Last question prompt
+
 **Closed point**:
-A moment in the teaching phase where the material just taught is closed, so a break doesn't split it. A unit end is the last node of a unit closed, before the teacher moves into the next unit; a node end is a node's check answered correctly with no repair pending, before the teacher moves on. A unit end is preferred; never mid-step or during a repair.
+A moment in the teaching phase where the material just taught is closed: a unit end is the last node of a unit closed, before the teacher moves into the next unit; a node end is a node's check answered correctly with no repair pending. It is no longer a break rule; breaks do not wait for it.
 _Avoid_: Closed block, stopping point, breakpoint
 
 **Find**:

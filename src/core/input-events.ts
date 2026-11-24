@@ -31,6 +31,7 @@
 import type { QuestionAnswerData } from "./question-core.ts";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { validatePluginSubmissionImageArray, validatePluginSubmissionImages, type PluginSubmissionImages, type PluginSubmissionOccurrence } from "./plugin-submissions.ts";
+import type { SideChatThread } from "./contracts/chat.ts";
 import type { LhMessage } from "./native-messages.ts";
 import {
 	activeProblemOf,
@@ -40,6 +41,8 @@ import {
 	danglingQuestionOf,
 	newAnswerResult,
 	newBreakEndedMessage,
+	newBreakNoteMessage,
+	newBreakSkippedMessage,
 	newNextMessage,
 	newProblemDismissedMarker,
 	newThinkingMessage,
@@ -82,6 +85,8 @@ export type ChatInput =
 	| { type: "next" }
 	/** Resume after a taken break (plan 002 part 4). */
 	| { type: "break-continue"; toolCallId: string }
+	/** Skip of a one-more-question break offer (plan 011 part 2): the marker plus the teacher's note. */
+	| { type: "break-skip-one-more"; toolCallId: string }
 	/** Retry the latest effect-free teacher reply (plan 006 part 1). */
 	| { type: "retry-reply" };
 
@@ -294,9 +299,28 @@ export function parseChatInput(input: unknown): ChatInput {
 		case "break-continue":
 			if (typeof i.toolCallId !== "string" || !i.toolCallId) throw new ChatInputError("break-continue input requires toolCallId");
 			return { type: "break-continue", toolCallId: i.toolCallId };
+		case "break-skip-one-more":
+			if (typeof i.toolCallId !== "string" || !i.toolCallId) throw new ChatInputError("break-skip-one-more input requires toolCallId");
+			return { type: "break-skip-one-more", toolCallId: i.toolCallId };
 		default:
 			throw new ChatInputError(`unknown input type: ${String(i.type)}`);
 	}
+}
+
+const ONE_MORE_QUESTION_NOTE_TEXT =
+	'[Session note] The learner wants to answer the one remaining question of this node before the break. Pose it now. After their answer, give one line of feedback and suggest the break (requestedBy "window").';
+
+/** Whether the suggest_break call carried oneMoreQuestion: true. */
+export function isOneMoreQuestionOffer(messages: readonly LhMessage[], toolCallId: string): boolean {
+	for (const m of messages) {
+		if (m.role !== "assistant") continue;
+		for (const block of m.content) {
+			if (block.type === "toolCall" && block.id === toolCallId && block.name === "suggest_break") {
+				return (block.arguments as { oneMoreQuestion?: unknown } | null)?.oneMoreQuestion === true;
+			}
+		}
+	}
+	return false;
 }
 
 /**
@@ -309,9 +333,10 @@ export function parseChatInput(input: unknown): ChatInput {
  * double-answering.
  */
 export function inputAppends(
-	record: { messages: LhMessage[]; kind?: string },
+	record: { messages: LhMessage[]; kind?: string; sideChats?: readonly SideChatThread[] },
 	input: ChatInput,
 	_now: number = Date.now(),
+	breaks: { enabled: boolean; intervalMinutes: number; lengthMinutes: number; resetMinutes: number } = BREAK_DEFAULTS,
 ): LhMessage[] {
 	assertPluginQuestionInputAllowed(record.messages, input);
 	assertNativeSubmissionTarget(record.messages, input);
@@ -372,6 +397,16 @@ export function inputAppends(
 				`[Session note] The learner is back from a ${clock} break. Re-orient them in one line (where we are, what's next), then continue teaching.`,
 				_now,
 			)];
+		}
+		case "break-skip-one-more": {
+			const latest = breakState(record.messages, record.sideChats, breakTimings(breaks), breaks.enabled, _now).latest;
+			if (!latest || latest.outcome !== "pending" || latest.toolCallId !== input.toolCallId || !isOneMoreQuestionOffer(record.messages, input.toolCallId)) {
+				throw new ChatInputError("No one-more-question break offer is open.");
+			}
+			return [
+				newBreakSkippedMessage(input.toolCallId, _now, true),
+				newBreakNoteMessage("one-more-question", ONE_MORE_QUESTION_NOTE_TEXT, undefined, _now),
+			];
 		}
 		case "retry-reply":
 			// The server replaces the reply itself (a later plan 006 part);

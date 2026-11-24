@@ -383,6 +383,21 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 const isOkBreakResult = (m: LhMessage): boolean =>
 	m.role === "toolResult" && m.toolName === "suggest_break" && !m.isError && (m.details as { ok?: boolean } | null)?.ok !== false;
 
+function hasOneMoreQuestion(messages: readonly LhMessage[], index: number, toolCallId: string): boolean {
+	if (((messages[index] as ToolResultMessage).details as { oneMoreQuestion?: unknown } | null)?.oneMoreQuestion === true) return true;
+	for (let i = index - 1; i >= 0; i--) {
+		const m = messages[i]!;
+		if (m.role !== "assistant") continue;
+		for (let c = m.content.length - 1; c >= 0; c--) {
+			const block = m.content[c]!;
+			if (block.type === "toolCall" && block.id === toolCallId && block.name === "suggest_break") {
+				return (block.arguments as { oneMoreQuestion?: unknown } | null)?.oneMoreQuestion === true;
+			}
+		}
+	}
+	return false;
+}
+
 /** The `data-break` payload of the suggest_break result at `index`, read from
  *  breakState as of just before the next ok suggestion; null when refused. */
 function breakPartData(messages: readonly LhMessage[], index: number): Record<string, unknown> | null {
@@ -398,6 +413,7 @@ function breakPartData(messages: readonly LhMessage[], index: number): Record<st
 	if (s.takenAt !== undefined) data.takenAt = s.takenAt;
 	if (s.lengthMinutes !== undefined) data.lengthMinutes = s.lengthMinutes;
 	if (s.breakMs !== undefined) data.breakMs = s.breakMs;
+	if (hasOneMoreQuestion(messages, index, s.toolCallId)) data.oneMoreQuestion = true;
 	return data;
 }
 

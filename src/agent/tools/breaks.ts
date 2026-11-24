@@ -15,6 +15,7 @@ export interface BreakToolContext {
 
 const suggestBreakInput = Type.Object({
 	requestedBy: Type.Union([Type.Literal("window"), Type.Literal("learner")]),
+	oneMoreQuestion: Type.Optional(Type.Boolean()),
 });
 
 const OK1 = "Break offered. End your turn now; the learner chooses in the app.";
@@ -23,6 +24,7 @@ const R1 =
 const R2 = "Teaching hasn't started yet. A due break waits for the first closed point in teaching.";
 const R3 = "A question is still open. Suggest the break after it is answered and the step is closed.";
 const R4 = "A break offer is already open.";
+const R5 = 'oneMoreQuestion only goes with requestedBy "window".';
 
 /**
  * suggest_break — the teacher's break offer. SERVER-SIDE. A window request
@@ -35,10 +37,11 @@ export function suggestBreakTool(ctx: BreakToolContext): Record<string, AgentToo
 			name: "suggest_break",
 			label: "suggest_break",
 			description:
-				'Offer the learner a short break. Call it only at a closed point: when a [Session note] says a break is due, or whenever the learner asks for a break (requestedBy "learner"). First say it in one line of ordinary prose about the material (e.g. that the unit is closed and this is a good moment), then call this tool and end your turn. The learner chooses Take or Skip in the app; don\'t ask them again in prose.',
+				'Offer the learner a short break. Call it when a [Session note] says a break is due, in that same turn, or whenever the learner asks for one (requestedBy "learner"). First say it in one line of ordinary prose, then call this tool and end your turn. With oneMoreQuestion true, your line offers the one question that would close the current node first. The learner chooses in the app; don\'t ask them again in prose.',
 			parameters: suggestBreakInput,
 			execute: serverExecute("suggest_break", suggestBreakInput, async (input) => {
 				const refuse = (text: string) => ({ text, details: { ok: false } });
+				if (input.oneMoreQuestion !== undefined && input.requestedBy !== "window") return refuse(R5);
 				const record = ctx.chatStore.getChat(ctx.chatId);
 				if (!record) return { ok: false, error: `Chat not found: ${ctx.chatId}` };
 
@@ -56,7 +59,7 @@ export function suggestBreakTool(ctx: BreakToolContext): Record<string, AgentToo
 					if (hasUnresolvedQuestion(record.messages)) return refuse(R3);
 				}
 				if (state.latest?.outcome === "pending" || state.latest?.outcome === "taken") return refuse(R4);
-				return { text: OK1, details: { ok: true, requestedBy: input.requestedBy } };
+				return { text: OK1, details: { ok: true, requestedBy: input.requestedBy, ...(input.oneMoreQuestion !== undefined ? { oneMoreQuestion: input.oneMoreQuestion } : {}) } };
 			}),
 		},
 	};
