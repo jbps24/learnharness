@@ -27,6 +27,7 @@ import type {
 	Position,
 	CoverageEntry,
 	SessionCheckpoint,
+	CourseMaterial,
 	SideChatThread,
 	TurnUsage,
 	NotesSource,
@@ -95,6 +96,8 @@ export interface ChatStore {
 	 *  side-chat service announces its own changes. Not conversation
 	 *  activity — updatedAt stays put. */
 	updateSideChats(id: string, update: (threads: SideChatThread[]) => SideChatThread[]): SideChatThread[] | null;
+	getCourseMaterial(chatId: string): CourseMaterial | null;
+	setCourseMaterial(chatId: string, material: CourseMaterial): void;
 }
 
 // ─── GraphStore — the append-only evidence ledgers (data/graph) ──────────────

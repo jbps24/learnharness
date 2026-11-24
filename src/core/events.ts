@@ -36,6 +36,8 @@ export interface ServerEvents {
 	/** A side conversation changed. Notify-then-fetch: open views refetch
 	 *  GET /api/chats/:id/side-chats. Closing never deletes it. */
 	"side-chats-changed": { chatId: string };
+	/** A chat's course files, methods or conflicts changed. */
+	"course-material-changed": { chatId: string };
 	/** Plugin availability/lifecycle changed; refetch installed packages. */
 	"plugins-changed": Record<string, never>;
 	/** Live-only, plugin-scoped notifications. Reconnect requires snapshot resync. */
@@ -58,6 +60,7 @@ export const SERVER_EVENT_TYPES = [
 	"record-changed",
 	"compaction-changed",
 	"side-chats-changed",
+	"course-material-changed",
 	"plugins-changed",
 	"plugin-message",
 ] as const satisfies readonly ServerEventType[];

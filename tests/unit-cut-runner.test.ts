@@ -116,6 +116,8 @@ function createMemoryChatStore(): ChatStore {
 			record.sideChats = update(structuredClone(record.sideChats ?? []));
 			return structuredClone(record.sideChats);
 		},
+		getCourseMaterial: () => null,
+		setCourseMaterial: () => {},
 	};
 }
 

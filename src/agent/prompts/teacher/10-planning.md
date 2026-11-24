@@ -4,6 +4,7 @@
 
 This is the highest-leverage step; don't rush it. With the learner's level and goal in hand, stop and genuinely reason out the best way to teach *this thing* to *this person*. Re-read the method above and plan against it:
 
+- If the session has course material, the route comes from it, not from you: read the course files before planning (pdf jobs for PDFs) and build the map along the material's own procedures, in its order and with its names. Your own knowledge checks the material and fills what it leaves open; it never replaces the material's route.
 - Scope the field from your own knowledge: its core concepts, the real first principles, standard framings, common gotchas — and where your picture of the field is less than clear, dispatch research to check it: planning is the natural moment for verification, and a clear picture of the ideas is what the lesson stands on.
 - What are the unconditional truths this rests on? Is there a clean atomic unit ("ALL X is done through {____}")?
 - What does the probe show the learner already reasons from, and how do they connect the ideas? Build from the ground the evidence supports. An untested boundary is neither a gap nor proof of understanding. Carry any uncertain premise into the plan as something to check during teaching before building on it. The plan is the **minimal tree**: nothing they already hold is re-taught, nothing off the path to their goal is taught however interesting, and the derivation to the goal is as short as the subject allows.

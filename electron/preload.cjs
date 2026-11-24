@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld("lh", {
 	// uploads, copies, or DOM File IPC to main; sandbox/isolation stay on.
 	getPathForFile: (file) => webUtils.getPathForFile(file),
 	chooseAttachmentFolder: () => ipcRenderer.invoke("lh:attachment:pick", "folder"),
+	// Main opens the path only when the chat's course material lists it.
+	openCourseFile: (chatId, path) => ipcRenderer.invoke("lh:open-course-file", chatId, path),
 	...(process.argv?.includes("--lh-web-subscriptions") ? {
 		subscriptionTransport: "web",
 		openSubscriptionBrowser: (action) => ipcRenderer.invoke("lh:subscriptions:web-browser", action),

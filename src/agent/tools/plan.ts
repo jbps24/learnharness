@@ -21,6 +21,9 @@ export interface PlanToolContext {
 	chatId: string;
 	/** The storage port plan tools persist through. */
 	chatStore: ChatStore;
+	/** Called after a successful plan_init saved `next` over `previous` (plan 007
+	 *  part 3: course assignment of the changed nodes). Never fails the call. */
+	onPlanSaved?: (previous: PlanTree | undefined, next: PlanTree) => void;
 }
 
 /**
@@ -120,6 +123,11 @@ export function planTools(ctx: PlanToolContext): Record<string, AgentTool<any>> 
 					const rewriteProblem = rewriteGuardProblem(record.tree, next, record.messages ?? []);
 					if (rewriteProblem) return { ok: false, error: rewriteProblem };
 					chatStore.saveTree(chatId, next);
+					try {
+						ctx.onPlanSaved?.(record.tree, next);
+					} catch (err) {
+						console.error(`[chat ${chatId}] course assignment after plan_init failed:`, err);
+					}
 					// Context diet: content = the validated nodeIds + the reminder (the
 				// ids just became binding for every quiz/explain call); details =
 					// the full tree for the record/UI — the plan popup's latestTree

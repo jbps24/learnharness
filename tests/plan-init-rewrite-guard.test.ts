@@ -43,6 +43,8 @@ function makeMemoryChatStore(): ChatStore {
 		renameChat: (id) => chats.get(id)!,
 		deleteChat: (id) => chats.delete(id),
 		updateSideChats: (_id: string, _fn: (t: SideChatThread[]) => SideChatThread[]) => null,
+		getCourseMaterial: () => null,
+		setCourseMaterial: () => {},
 	};
 }
 

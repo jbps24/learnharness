@@ -173,11 +173,12 @@ export interface ChatRecord {
     extractions?: ExtractionRunUsage[];
     settings?: ChatSettings;
     sideChats?: SideChatThread[];
+    courseMaterial?: CourseMaterial;
     version?: number;
 }
 ```
 
-**Related types:** [ChatKind](contracts-chat.md#chatkind), [ChatSettings](contracts-chat.md#chatsettings), [ExtractionRunUsage](contracts-chat.md#extractionrunusage), [ImageSnapshot](contracts-chat.md#imagesnapshot), [LhMessage](native-messages.md#lhmessage), [PlanTree](contracts-plan.md#plantree), [SideChatThread](contracts-chat.md#sidechatthread), [TurnUsage](contracts-chat.md#turnusage).
+**Related types:** [ChatKind](contracts-chat.md#chatkind), [ChatSettings](contracts-chat.md#chatsettings), [CourseMaterial](contracts-course.md#coursematerial), [ExtractionRunUsage](contracts-chat.md#extractionrunusage), [ImageSnapshot](contracts-chat.md#imagesnapshot), [LhMessage](native-messages.md#lhmessage), [PlanTree](contracts-plan.md#plantree), [SideChatThread](contracts-chat.md#sidechatthread), [TurnUsage](contracts-chat.md#turnusage).
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
@@ -193,6 +194,7 @@ export interface ChatRecord {
 - [extractions](#chatrecord-extractions)
 - [settings](#chatrecord-settings)
 - [sideChats](#chatrecord-sidechats)
+- [courseMaterial](#chatrecord-coursematerial)
 - [version](#chatrecord-version)
 
 ### ChatRecord id
@@ -285,6 +287,14 @@ all threads; already-recorded teacher history is never rewritten.
 
 ```ts
 sideChats?: SideChatThread[];
+```
+
+### ChatRecord courseMaterial
+
+Course files, extracted node methods and unresolved route conflicts.
+
+```ts
+courseMaterial?: CourseMaterial;
 ```
 
 ### ChatRecord version

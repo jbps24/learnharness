@@ -10,6 +10,7 @@ import type { LhMessage } from "../native-messages.ts";
 import type { Phase3 } from "../phases.ts";
 import type { PlanNodeStatus, PlanTree, PlanUnit } from "./plan.ts";
 import type { EmissionStats } from "./graph.ts";
+import type { CourseMaterial } from "./course.ts";
 
 // ─── Chat records (the session store's on-disk format) ───────────────────────
 
@@ -47,6 +48,8 @@ export interface ChatRecord {
 	 * shares one thread. Every main request appends new raw exchanges across
 	 * all threads; already-recorded teacher history is never rewritten. */
 	sideChats?: SideChatThread[];
+	/** Course files, extracted node methods and unresolved route conflicts. */
+	courseMaterial?: CourseMaterial;
 	/** Schema version. Absence denotes version 1; writes stamp the current
 	 * supported version. Reads refuse records stamped newer than this build
 	 * so a downgraded app cannot rewrite an unsupported record. */

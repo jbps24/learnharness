@@ -86,7 +86,9 @@ export interface LhMarkerMessage {
 		| "side-question"
 		| "side-question-told"
 		| "lesson-record"
-		| "units-note";
+		| "units-note"
+		| "course-files"
+		| "course-method";
 	/** The model-facing text ("" for plan blocks — UI-only). */
 	content: string;
 	display: boolean;
@@ -401,6 +403,35 @@ export function newUnitsNoteMessage(): LhMarkerMessage {
 		content: UNITS_NOTE_TEXT,
 		display: false,
 		details: null,
+		timestamp: Date.now(),
+	};
+}
+
+export function newCourseFilesNoteMessage(paths: string[]): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "course-files",
+		content: [
+			"[Course material] This lesson's course files (their methods are binding):",
+			...paths.map((p) => `- ${p}`),
+			"",
+			"Files the learner switched off are not listed and no longer bind.",
+		].join("\n"),
+		display: false,
+		details: { paths },
+		timestamp: Date.now(),
+	};
+}
+
+export function newCourseMethodNoteMessage(nodeId: string, text: string, digest: string): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "course-method",
+		content: text,
+		display: false,
+		details: { nodeId, digest },
 		timestamp: Date.now(),
 	};
 }
@@ -1003,7 +1034,7 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
 		if (["practice-thinking", "plugin-problem-submission", "practice-next"].includes(message.customType)) return "learner";
-		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "lesson-record", "units-note"].includes(message.customType) ? "neutral" : "unrecognizable";
+		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "lesson-record", "units-note", "course-files", "course-method"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {
 		const pluginAnswer = readPluginQuestionAnswer(message.details);
