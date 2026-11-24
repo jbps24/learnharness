@@ -33,3 +33,4 @@ xai-credentials.json*
 # implementation ladder working trees
 build-review/
 build-mutate/
+.scratch/

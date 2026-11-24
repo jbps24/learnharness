@@ -6,6 +6,7 @@ import {
 	type ExamPattern,
 	type NodeConflict,
 	type NodeMethod,
+	type ReferenceSection,
 } from "./contracts/course.ts";
 import type { PlanTree } from "./contracts/plan.ts";
 
@@ -26,7 +27,7 @@ export interface CourseAssignPromptInput {
 	path: string;
 	targets: readonly AssignmentTargetNode[];
 	existingMethods?: Record<string, readonly ExistingNodeMethod[]>;
-	category?: "material" | "exam";
+	category?: "material" | "exam" | "reference";
 }
 
 export interface AssignmentNodeOutput {
@@ -44,9 +45,19 @@ export interface ExamAssignmentNodeOutput {
 	grading?: string;
 }
 
+export interface ReferencePointerNodeOutput {
+	nodeId: string;
+	sectionIds: string[];
+}
+
 export type AssignmentResult =
 	| { category: "material"; nodes: AssignmentNodeOutput[] }
-	| { category: "exam"; nodes: ExamAssignmentNodeOutput[] };
+	| { category: "exam"; nodes: ExamAssignmentNodeOutput[] }
+	| {
+			category: "reference";
+			nodes: ReferencePointerNodeOutput[];
+			index?: { from: "outline" | "contents" | "headings"; sections: ReferenceSection[] };
+	  };
 
 export type CourseAssignWorkerResult =
 	| { ok: true; result: AssignmentResult }
@@ -57,7 +68,8 @@ export interface CourseAssignWorkerInput {
 	path: string;
 	targets: AssignmentTargetNode[];
 	existingMethods: Record<string, ExistingNodeMethod[]>;
-	category?: "material" | "exam";
+	category?: "material" | "exam" | "reference";
+	referenceIndex?: { from: "outline" | "contents" | "headings"; sections: ReferenceSection[] };
 	abortSignal: AbortSignal;
 }
 
@@ -96,6 +108,8 @@ export interface AssignmentTargetsResult {
 export const COURSE_ASSIGN_INSTRUCTIONS = `You read one course file for a learning application. The learner must pass an exam in this course, so the course's own way of solving each problem is what matters, not the most standard or shortest way.
 
 First decide what this file is. A past exam or exam-like task sheet of the course (tasks with points or a time limit, "Klausur", "Prüfung", "Exam", possibly with a solution) is an **exam**. Anything else (script, lecture notes, exercise solutions that teach a method) is **material**. When the task states the category, use that one.
+
+A published textbook or reference work (ISBN, publisher, edition, numbered chapters) that is not the course's own script, slides or lecture notes is a **reference**. For a reference, return {"category":"reference","nodes":[]} at once; do not read it against the plan.
 
 For **material**, do what follows below and set "category":"material".
 
@@ -141,9 +155,11 @@ export function parseAssignment(text: string, targetIds: readonly string[]): Par
 		return { ok: false, problems: ["the output must be one JSON object with a \"nodes\" array"] };
 	}
 	const category = (raw as { category?: unknown }).category;
-	if (category !== "material" && category !== "exam") {
-		return { ok: false, problems: ["\"category\" must be \"material\" or \"exam\""] };
+	if (category !== "material" && category !== "exam" && category !== "reference") {
+		return { ok: false, problems: ["\"category\" must be \"material\", \"exam\" or \"reference\""] };
 	}
+	// The reader stops at the sort; the pointer mapper fills the nodes in.
+	if (category === "reference") return { ok: true, value: { category, nodes: [] } };
 	const entries = (raw as { nodes?: unknown }).nodes;
 	if (!Array.isArray(entries)) return { ok: false, problems: ["\"nodes\" must be an array"] };
 
@@ -248,6 +264,38 @@ export function applyAssignment(
 	if (result.category !== category) return finish({});
 
 	const targets = new Set(targetIds ?? result.nodes.map((node) => node.nodeId));
+	if (result.category === "reference") {
+		const referencePointers = [
+			...(material.referencePointers ?? []).filter((p) => p.path !== filePath || !targets.has(p.nodeId)),
+			...result.nodes.map((node) => ({ nodeId: node.nodeId, path: filePath, sectionIds: node.sectionIds })),
+		];
+		const referenceIndex = result.index
+			? [
+					...(material.referenceIndex ?? []).filter((entry) => entry.path !== filePath),
+					{ path: filePath, from: result.index.from, sections: result.index.sections },
+				]
+			: material.referenceIndex;
+		const methods = material.methods.filter((m) => m.path !== filePath);
+		const conflicts = material.conflicts
+			.map(({ chosen, ...rest }) => ({
+				...rest,
+				paths: rest.paths.filter((p) => p !== filePath),
+				...(chosen && chosen !== filePath ? { chosen } : {}),
+			}))
+			.filter((c) => c.paths.length >= 2);
+		const examPatterns = (material.examPatterns ?? []).filter((p) => p.path !== filePath);
+		return finish({
+			methods,
+			conflicts,
+			referencePointers,
+			...(referenceIndex ? { referenceIndex } : {}),
+			...(material.examPatterns ? { examPatterns } : {}),
+		});
+	}
+	const referenceCleanup: Partial<CourseMaterial> = {
+		...(material.referenceIndex ? { referenceIndex: material.referenceIndex.filter((entry) => entry.path !== filePath) } : {}),
+		...(material.referencePointers ? { referencePointers: material.referencePointers.filter((pointer) => pointer.path !== filePath) } : {}),
+	};
 	if (result.category === "exam") {
 		const examPatterns: ExamPattern[] = [
 			...(material.examPatterns ?? []).filter((p) => p.path !== filePath || !targets.has(p.nodeId)),
@@ -270,7 +318,7 @@ export function applyAssignment(
 					}))
 					.filter((c) => c.paths.length >= 2)
 			: material.conflicts;
-		return finish({ examPatterns, methods, conflicts });
+		return finish({ examPatterns, methods, conflicts, ...referenceCleanup });
 	}
 	const examPatterns = (material.examPatterns ?? []).filter((p) => p.path !== filePath || (!flipped && !targets.has(p.nodeId)));
 	const methods: NodeMethod[] = material.methods.filter((m) => !(m.path === filePath && targets.has(m.nodeId)));
@@ -294,7 +342,7 @@ export function applyAssignment(
 		});
 	}
 
-	return finish({ methods, conflicts, ...(material.examPatterns ? { examPatterns } : {}) });
+	return finish({ methods, conflicts, ...(material.examPatterns ? { examPatterns } : {}), ...referenceCleanup });
 }
 
 export function assignmentTargets(input: AssignmentTargetsInput): AssignmentTargetsResult {
@@ -312,7 +360,14 @@ export function assignmentTargets(input: AssignmentTargetsInput): AssignmentTarg
 	const live = new Set(nextTree.nodes.map((node) => node.id));
 	const methods = input.material.methods.filter((m) => live.has(m.nodeId));
 	const conflicts = input.material.conflicts.filter((c) => live.has(c.nodeId) && c.paths.length >= 2);
-	const material: CourseMaterial = { ...input.material, methods, conflicts };
+	const material: CourseMaterial = {
+		...input.material,
+		methods,
+		conflicts,
+		...(input.material.referencePointers
+			? { referencePointers: input.material.referencePointers.filter((p) => live.has(p.nodeId)) }
+			: {}),
+	};
 
 	const previous = new Map((previousTree?.nodes ?? []).map((node) => [node.id, node]));
 	const changed = nextTree.nodes

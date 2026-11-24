@@ -5,6 +5,7 @@ import {
 	newCourseFilesNoteMessage,
 	newCourseMethodNoteMessage,
 	newExamPatternNoteMessage,
+	newReferenceNoteMessage,
 	type LhMarkerMessage,
 	type LhMessage,
 } from "./native-messages.ts";
@@ -62,25 +63,11 @@ export function courseNotesFor(
 	if (!material) return [];
 	const binding = new Set(material.files.filter((f) => f.binding && fileCategory(f) === "material").map((f) => f.path));
 	const paths = [...binding].sort();
-	if (paths.length === 0) return [];
+	const referencePaths = material.files.filter((f) => f.binding && fileCategory(f) === "reference").map((f) => f.path).sort();
+	if (paths.length === 0 && referencePaths.length === 0) return [];
 
 	const live = messages.slice(projectionHeads(messages).start);
 	const notes: LhMarkerMessage[] = [];
-
-	let newestFiles: string[] | null = null;
-	for (const m of live) {
-		if (m.role === "custom" && m.customType === "course-files") newestFiles = (m.details as { paths?: string[] } | null)?.paths ?? [];
-	}
-	if (newestFiles === null || newestFiles.length !== paths.length || newestFiles.some((p, i) => p !== paths[i])) {
-		notes.push(newCourseFilesNoteMessage(paths));
-	}
-
-	const liveDigests = new Set<string>();
-	for (const m of live) {
-		if (m.role !== "custom" || m.customType !== "course-method") continue;
-		const details = m.details as { nodeId?: string; digest?: string } | null;
-		if (details) liveDigests.add(`${details.nodeId}\n${details.digest}`);
-	}
 
 	let scope = tree.nodes;
 	if (tree.units) {
@@ -89,13 +76,70 @@ export function courseNotesFor(
 		const ids = new Set(tree.units[index]?.nodeIds ?? []);
 		scope = tree.nodes.filter((n) => ids.has(n.id));
 	}
-	for (const node of scope) {
-		const text = methodNoteText(node.id, node.title, material, binding);
-		if (text === null) continue;
+
+	if (paths.length > 0) {
+		let newestFiles: string[] | null = null;
+		for (const m of live) {
+			if (m.role === "custom" && m.customType === "course-files") newestFiles = (m.details as { paths?: string[] } | null)?.paths ?? [];
+		}
+		if (newestFiles === null || newestFiles.length !== paths.length || newestFiles.some((p, i) => p !== paths[i])) {
+			notes.push(newCourseFilesNoteMessage(paths));
+		}
+
+		const liveDigests = new Set<string>();
+		for (const m of live) {
+			if (m.role !== "custom" || m.customType !== "course-method") continue;
+			const details = m.details as { nodeId?: string; digest?: string } | null;
+			if (details) liveDigests.add(`${details.nodeId}\n${details.digest}`);
+		}
+		for (const node of scope) {
+			const text = methodNoteText(node.id, node.title, material, binding);
+			if (text === null) continue;
+			const digest = digestOf(text);
+			if (!liveDigests.has(`${node.id}\n${digest}`)) notes.push(newCourseMethodNoteMessage(node.id, text, digest));
+		}
+	}
+
+	if (referencePaths.length > 0) {
+		const text = referenceNoteText(referencePaths, scope, material);
 		const digest = digestOf(text);
-		if (!liveDigests.has(`${node.id}\n${digest}`)) notes.push(newCourseMethodNoteMessage(node.id, text, digest));
+		const isLive = live.some(
+			(m) =>
+				m.role === "custom" && m.customType === "reference"
+				&& (m.details as { digest?: string } | null)?.digest === digest,
+		);
+		if (!isLive) notes.push(newReferenceNoteMessage(text, digest));
 	}
 	return notes;
+}
+
+/** The [Reference] note (plan 012 part 4): the binding reference files and, for the unit's nodes, where in them to look. */
+function referenceNoteText(
+	referencePaths: readonly string[],
+	scope: readonly { id: string; title: string }[],
+	material: CourseMaterial,
+): string {
+	const files = new Set(referencePaths);
+	const where: string[] = [];
+	for (const node of scope) {
+		for (const pointer of material.referencePointers ?? []) {
+			if (pointer.nodeId !== node.id || !files.has(pointer.path)) continue;
+			const sections = material.referenceIndex?.find((e) => e.path === pointer.path)?.sections ?? [];
+			for (const id of pointer.sectionIds) {
+				const s = sections.find((x) => x.id === id);
+				if (!s) continue;
+				const printed = s.label ? `, printed ${s.label}` : "";
+				where.push(`- \`${node.id}\` (${node.title}): ${fileName(pointer.path)} §${s.id} ${s.title} (pages ${s.startPage}–${s.endPage}${printed})`);
+			}
+		}
+	}
+	return [
+		"[Reference] Reference files for this course. They are not course material: they never set what is learned.",
+		...referencePaths.map((p) => `- ${p}`),
+		...(where.length > 0 ? ["", "Where to look for this unit's nodes:", ...where] : []),
+		"",
+		"When the learner asks something the course material doesn't answer, or the material leaves a step open, look it up here first: a pdf job with this file, these pages and your question.",
+	].join("\n");
 }
 
 /** The notes due before the next learner input of a practice turn (plan 007 part 6). */

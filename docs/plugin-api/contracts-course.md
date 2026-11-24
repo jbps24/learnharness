@@ -11,6 +11,7 @@
 - [NodeConflict](#nodeconflict) — supporting declaration
 - [NodeMethod](#nodemethod) — supporting declaration
 - [PropositionMethod](#propositionmethod) — supporting declaration
+- [ReferenceSection](#referencesection) — supporting declaration
 
 ## CourseFile
 
@@ -24,7 +25,7 @@ export interface CourseFile {
     binding: boolean;
     status: CourseFileStatus;
     error?: string;
-    category?: "material" | "exam";
+    category?: "material" | "exam" | "reference";
     categoryBy?: "reader" | "learner";
 }
 ```
@@ -81,7 +82,7 @@ error?: string;
 ### CourseFile category
 
 ```ts
-category?: "material" | "exam";
+category?: "material" | "exam" | "reference";
 ```
 
 ### CourseFile categoryBy
@@ -113,10 +114,20 @@ export interface CourseMaterial {
         propositionId: string;
         lessonId: string;
     }>;
+    referenceIndex?: Array<{
+        path: string;
+        from: "outline" | "contents" | "headings";
+        sections: ReferenceSection[];
+    }>;
+    referencePointers?: Array<{
+        nodeId: string;
+        path: string;
+        sectionIds: string[];
+    }>;
 }
 ```
 
-**Related types:** [CourseFile](contracts-course.md#coursefile), [ExamPattern](contracts-course.md#exampattern), [NodeConflict](contracts-course.md#nodeconflict), [NodeMethod](contracts-course.md#nodemethod), [PropositionMethod](contracts-course.md#propositionmethod).
+**Related types:** [CourseFile](contracts-course.md#coursefile), [ExamPattern](contracts-course.md#exampattern), [NodeConflict](contracts-course.md#nodeconflict), [NodeMethod](contracts-course.md#nodemethod), [PropositionMethod](contracts-course.md#propositionmethod), [ReferenceSection](contracts-course.md#referencesection).
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
@@ -126,6 +137,8 @@ export interface CourseMaterial {
 - [propositionMethods](#coursematerial-propositionmethods)
 - [examPatterns](#coursematerial-exampatterns)
 - [propositionExamPatterns](#coursematerial-propositionexampatterns)
+- [referenceIndex](#coursematerial-referenceindex)
+- [referencePointers](#coursematerial-referencepointers)
 
 ### CourseMaterial files
 
@@ -165,6 +178,26 @@ examPatterns?: ExamPattern[];
 propositionExamPatterns?: Array<ExamPattern & {
     propositionId: string;
     lessonId: string;
+}>;
+```
+
+### CourseMaterial referenceIndex
+
+```ts
+referenceIndex?: Array<{
+    path: string;
+    from: "outline" | "contents" | "headings";
+    sections: ReferenceSection[];
+}>;
+```
+
+### CourseMaterial referencePointers
+
+```ts
+referencePointers?: Array<{
+    nodeId: string;
+    path: string;
+    sectionIds: string[];
 }>;
 ```
 
@@ -366,4 +399,64 @@ pages?: string;
 
 ```ts
 method: string;
+```
+
+## ReferenceSection
+
+Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
+
+```ts
+export interface ReferenceSection {
+    id: string;
+    title: string;
+    level: number;
+    startPage: number;
+    endPage: number;
+    label?: string;
+}
+```
+
+**Member index** (including nested object members; inherited members are defined in the linked base types):
+
+- [id](#referencesection-id)
+- [title](#referencesection-title)
+- [level](#referencesection-level)
+- [startPage](#referencesection-startpage)
+- [endPage](#referencesection-endpage)
+- [label](#referencesection-label)
+
+### ReferenceSection id
+
+```ts
+id: string;
+```
+
+### ReferenceSection title
+
+```ts
+title: string;
+```
+
+### ReferenceSection level
+
+```ts
+level: number;
+```
+
+### ReferenceSection startPage
+
+```ts
+startPage: number;
+```
+
+### ReferenceSection endPage
+
+```ts
+endPage: number;
+```
+
+### ReferenceSection label
+
+```ts
+label?: string;
 ```

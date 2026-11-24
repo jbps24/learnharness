@@ -10,8 +10,11 @@ import {
 	type AssignmentResult,
 	type CourseAssignWorker,
 	type CourseAssignWorkerInput,
+	type CourseAssignWorkerResult,
 } from "../../core/course-assign.ts";
+import { buildReferenceMapperPrompt, parseReferencePointers, REFERENCE_MAPPER_INSTRUCTIONS } from "../../core/reference-pointers.ts";
 import type { PiEngine } from "../models.ts";
+import { extractReferenceToc } from "./reference-toc.ts";
 import { createWorkerRequestScope } from "../worker-request-admission.ts";
 import { resolveSourcePath } from "../tools/fs-shared.ts";
 import { runPdfReaderAgent } from "./pdf-reader.ts";
@@ -74,9 +77,9 @@ function toolText(toolCallId: string, value: string): ToolResultMessage {
 	};
 }
 
-async function streamOnce(engine: PiEngine, systemPrompt: string, messages: Message[], sessionId: string, signal: AbortSignal, streamFn: PiEngine["streamFn"]): Promise<AssistantMessage> {
+async function streamOnce(engine: PiEngine, systemPrompt: string, messages: Message[], sessionId: string, signal: AbortSignal, streamFn: PiEngine["streamFn"], tools: Tool[] = [readChunkTool]): Promise<AssistantMessage> {
 	const reasoning = engine.level;
-	const stream = streamFn(engine.model, normalizeContext({ systemPrompt, messages, tools: [readChunkTool] }), {
+	const stream = streamFn(engine.model, normalizeContext({ systemPrompt, messages, tools }), {
 		sessionId,
 		reasoning: reasoning && reasoning !== "off" ? reasoning : undefined,
 		signal,
@@ -135,10 +138,63 @@ async function runTextAssignment(engine: PiEngine, path: string, prompt: string,
 	}
 }
 
+type ReferenceIndex = NonNullable<CourseAssignWorkerInput["referenceIndex"]>;
+
+/** The pointer mapper (plan 012 part 3): one no-tools call over the TOC lines, one repair attempt. */
+async function runPointerMapper(
+	engine: PiEngine,
+	input: CourseAssignWorkerInput,
+	index: ReferenceIndex,
+): Promise<CourseAssignWorkerResult> {
+	const prompt = buildReferenceMapperPrompt({ path: input.path, sections: index.sections, targets: input.targets });
+	const targetIds = input.targets.map((t) => t.id);
+	const sectionIds = index.sections.map((s) => s.id);
+	const requests = createWorkerRequestScope(engine.streamFn, input.abortSignal);
+	const sessionId = randomUUID();
+	try {
+		let extra = "";
+		let problems: string[] = [];
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const reply = await streamOnce(
+				engine,
+				REFERENCE_MAPPER_INSTRUCTIONS,
+				[{ role: "user", content: extra ? `${prompt}\n\n${extra}` : prompt, timestamp: Date.now() }],
+				sessionId,
+				input.abortSignal,
+				requests.streamFn,
+				[],
+			);
+			const text = reply.content
+				.filter((c): c is { type: "text"; text: string } => c.type === "text")
+				.map((c) => c.text)
+				.join("");
+			const parsed = parseReferencePointers(jsonCandidate(text), targetIds, sectionIds);
+			if (parsed.ok) {
+				return {
+					ok: true,
+					result: {
+						category: "reference",
+						nodes: parsed.nodes,
+						...(input.referenceIndex ? {} : { index }),
+					},
+				};
+			}
+			problems = parsed.problems;
+			extra = `Your previous answer had these problems:\n${problems.map((p) => `- ${p}`).join("\n")}\nReturn the corrected JSON object.`;
+		}
+		return { ok: false, error: problems.join("; ") || "Mapping the reference failed." };
+	} finally {
+		requests.close();
+	}
+}
+
 export function createCourseAssignWorker(options: CourseAssignWorkerOptions): CourseAssignWorker {
 	return async (input: CourseAssignWorkerInput) => {
 		const engine = options.engineFor();
 		if (!engine) return { ok: false, error: "No model is configured for reading course files." };
+		if (input.category === "reference" && input.referenceIndex) {
+			return runPointerMapper(engine, input, input.referenceIndex);
+		}
 		const targetIds = input.targets.map((t) => t.id);
 		const prompt = buildAssignmentPrompt({ path: input.path, targets: input.targets, existingMethods: input.existingMethods, ...(input.category ? { category: input.category } : {}) });
 		const isPdf = input.path.toLowerCase().endsWith(".pdf");
@@ -162,6 +218,15 @@ export function createCourseAssignWorker(options: CourseAssignWorkerOptions): Co
 			const answer = await run(extra);
 			if (typeof answer !== "string") return { ok: false, error: answer.failure };
 			parsed = parseAssignment(answer, targetIds);
+			if (parsed.ok && parsed.value.category === "reference") {
+				let index = input.referenceIndex;
+				if (!index) {
+					const toc = await extractReferenceToc({ path: input.path, abortSignal: input.abortSignal, chatId: input.chatId }, { engine });
+					if (!toc.ok) return { ok: false, error: toc.error };
+					index = { from: toc.from, sections: toc.sections };
+				}
+				return runPointerMapper(engine, input, index);
+			}
 			if (parsed.ok) return { ok: true, result: parsed.value satisfies AssignmentResult };
 			extra = `Your previous answer had these problems:\n${parsed.problems.map((p) => `- ${p}`).join("\n")}\nReturn the corrected JSON object.`;
 		}

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { COURSE_METHOD_CAP, type CourseMaterial } from "../src/core/contracts/course.ts";
 import {
+	COURSE_ASSIGN_INSTRUCTIONS,
 	applyAssignment,
 	buildAssignmentPrompt,
 	parseAssignment,
@@ -157,6 +158,36 @@ describe("parseAssignment", () => {
 		const parsed = parseAssignment(raw, TARGETS);
 		assert.equal(parsed.ok, false);
 		assert.ok(parsed.problems.length >= 3);
+	});
+
+	// plan 012 part 3: COURSE_ASSIGN_INSTRUCTIONS gains the confirmed reference branch
+	it("includes the owner-confirmed reference branch in COURSE_ASSIGN_INSTRUCTIONS", () => {
+		const expected =
+			'A published textbook or reference work (ISBN, publisher, edition, numbered chapters) that is not the course\'s own script, slides or lecture notes is a **reference**. For a reference, return {"category":"reference","nodes":[]} at once; do not read it against the plan.';
+		assert.ok(COURSE_ASSIGN_INSTRUCTIONS.includes(expected));
+	});
+
+	// plan 012 part 3: learner-set category prompt also allows reference
+	it("includes reference in buildAssignmentPrompt when category is reference", () => {
+		const prompt = buildAssignmentPrompt({
+			path: "/course/textbook.pdf",
+			targets: [{ id: "n1", title: "Node 1" }],
+			category: "reference",
+		});
+		assert.ok(prompt.includes("This file is a reference; do not decide again."));
+	});
+
+	// plan 012 part 3: parseAssignment accepts {"category":"reference","nodes":[]}
+	it("accepts a reference result with empty nodes", () => {
+		const parsed = parseAssignment(JSON.stringify({ category: "reference", nodes: [] }), TARGETS);
+		assert.deepEqual(parsed, { ok: true, value: { category: "reference", nodes: [] } });
+	});
+
+	// plan 012 part 3: parseAssignment rejects unknown categories while allowing material, exam, reference
+	it("rejects categories other than material, exam, or reference", () => {
+		const parsed = parseAssignment(JSON.stringify({ category: "textbook", nodes: [] }), TARGETS);
+		assert.equal(parsed.ok, false);
+		assert.ok(parsed.problems.length > 0);
 	});
 });
 

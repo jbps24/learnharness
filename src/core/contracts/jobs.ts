@@ -270,6 +270,8 @@ export interface PdfToolInput {
 	path: string;
 	/** What the teacher needs from the document — focuses the brief. */
 	question: string;
+	/** Optional page spec (e.g. "10-15") to scope initial reading. */
+	pages?: string;
 }
 
 export interface PdfResult {

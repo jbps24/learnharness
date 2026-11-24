@@ -323,3 +323,51 @@ export function renderDir(filePath: string): string {
 	}
 	return path.join("/tmp", `lh-pdf-${h.toString(16).padStart(8, "0")}`);
 }
+
+export interface PdfOutlineItem {
+	title: string;
+	/** 1-based PDF page number, or null when the outline entry has no resolvable destination. */
+	page: number | null;
+	items: PdfOutlineItem[];
+}
+
+export interface PdfOutline {
+	pageCount: number;
+	pageLabels: string[] | null;
+	items: PdfOutlineItem[];
+}
+
+/** Extract the PDF's bookmark outline (1-based page numbers) and page labels. */
+export async function pdfOutline(filePath: string): Promise<PdfOutline> {
+	const { doc, task } = await openDocument(filePath);
+	try {
+		type RawOutline = { title: string; dest: string | unknown[] | null; items: RawOutline[] };
+		const resolvePage = async (dest: string | unknown[] | null): Promise<number | null> => {
+			try {
+				const explicit = typeof dest === "string" ? await doc.getDestination(dest) : dest;
+				const ref = Array.isArray(explicit) ? explicit[0] : null;
+				if (typeof ref === "number") return ref + 1;
+				if (ref && typeof ref === "object") return (await doc.getPageIndex(ref as Parameters<typeof doc.getPageIndex>[0])) + 1;
+			} catch {
+				// unresolvable destination: the entry has no page
+			}
+			return null;
+		};
+		const convert = async (list: RawOutline[]): Promise<PdfOutlineItem[]> => {
+			const out: PdfOutlineItem[] = [];
+			for (const item of list) {
+				out.push({ title: item.title, page: await resolvePage(item.dest), items: await convert(item.items) });
+			}
+			return out;
+		};
+		const outline = (await doc.getOutline()) as RawOutline[] | null;
+		const labels = await doc.getPageLabels();
+		return {
+			pageCount: doc.numPages,
+			pageLabels: labels ? [...labels] : null,
+			items: outline ? await convert(outline) : [],
+		};
+	} finally {
+		await task.destroy();
+	}
+}

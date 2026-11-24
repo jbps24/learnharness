@@ -7,8 +7,17 @@ export interface CourseFile {
 	binding: boolean;        // the learner's tick; true when added
 	status: CourseFileStatus;
 	error?: string;          // only when status is "failed"
-	category?: "material" | "exam";
+	category?: "material" | "exam" | "reference";
 	categoryBy?: "reader" | "learner";
+}
+
+export interface ReferenceSection {
+	id: string;
+	title: string;
+	level: number;
+	startPage: number;
+	endPage: number;
+	label?: string;
 }
 
 export interface NodeMethod {
@@ -50,12 +59,15 @@ export interface CourseMaterial {
 	propositionMethods?: PropositionMethod[];
 	examPatterns?: ExamPattern[];
 	propositionExamPatterns?: Array<ExamPattern & { propositionId: string; lessonId: string }>;
+	referenceIndex?: Array<{ path: string; from: "outline" | "contents" | "headings"; sections: ReferenceSection[] }>;
+	referencePointers?: Array<{ nodeId: string; path: string; sectionIds: string[] }>;
 }
 
 export const COURSE_METHOD_CAP = 1_500;
 export const EXAM_PATTERN_CAP = 1_200;
+export const REFERENCE_SECTIONS_CAP = 800;
 export const ASSIGNABLE_EXTENSIONS = [".pdf", ".md", ".markdown", ".txt", ".tex"] as const;
 
-export function fileCategory(file: CourseFile): "material" | "exam" {
+export function fileCategory(file: CourseFile): "material" | "exam" | "reference" {
 	return file.category ?? "material";
 }

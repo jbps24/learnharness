@@ -87,9 +87,20 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 		const controller = new AbortController();
 		registerJobAbort(job.id, controller);
 		try {
-			const outcome = await deps.worker({ chatId, path: target.path, targets,
+			const stored = material.referenceIndex?.find((entry) => entry.path === target.path);
+			const category =
+				file.categoryBy === "learner" && (file.category === "material" || file.category === "exam" || file.category === "reference")
+					? file.category
+					: file.category === "reference" && stored
+						? "reference"
+						: undefined;
+			const outcome = await deps.worker({
+				chatId,
+				path: target.path,
+				targets,
 				existingMethods,
-				...(file.categoryBy === "learner" && file.category ? { category: file.category } : {}),
+				...(category ? { category } : {}),
+				...(file.category === "reference" && stored ? { referenceIndex: { from: stored.from, sections: stored.sections } } : {}),
 				abortSignal: controller.signal,
 			});
 			if (controller.signal.aborted) throw new Error("aborted");
@@ -101,7 +112,9 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 				const filtered: AssignmentResult =
 					outcome.result.category === "exam"
 						? { category: "exam", nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) }
-						: { category: "material", nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) };
+						: outcome.result.category === "reference"
+							? { ...outcome.result, nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) }
+							: { category: "material", nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) };
 				const currentFile = current.files.find((f) => f.path === target.path);
 				if (
 					currentFile?.categoryBy === "learner" &&

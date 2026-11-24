@@ -88,6 +88,11 @@ export const pdfInputSchema = Type.Object({
 			"What you need from the document — the specific content, explanation, or answer to extract and brief. " +
 			"The reader sees NOTHING else of the lesson.",
 	}),
+	pages: Type.Optional(
+		Type.String({
+			description: "Page spec (e.g. '10-15') to scope the reading, e.g. the pages a [Reference] note points to.",
+		}),
+	),
 });
 
 /**

@@ -64,6 +64,23 @@ function examGroupsOf(file: CourseFile, material: CourseMaterial, nodes: Array<{
 		.filter((group) => group.patterns.length > 0);
 }
 
+/** A reference file's pointed sections per plan node in plan-map order (plan 012 part 5). */
+function referenceGroupsOf(file: CourseFile, material: CourseMaterial, nodes: Array<{ id: string; title: string }>) {
+	const sections = material.referenceIndex?.find((r) => r.path === file.path)?.sections ?? [];
+	return nodes
+		.map((node) => ({
+			node,
+			sections: (material.referencePointers ?? [])
+				.filter((p) => p.path === file.path && p.nodeId === node.id)
+				.flatMap((p) => p.sectionIds)
+				.map((id) => sections.find((s) => s.id === id))
+				.filter((s) => s !== undefined),
+		}))
+		.filter((group) => group.sections.length > 0);
+}
+
+const CATEGORY_LABEL = { material: "Course material", exam: "Exams", reference: "Reference" } as const;
+
 /** One file's details (plan 009 part 2): path, status and, once assigned, each
  *  plan node's pages and method text; for an exam file the task patterns
  *  (plan 010 part 4) and the move button. Reads the panel's data; no fetch. */
@@ -73,13 +90,17 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 	nodes: Array<{ id: string; title: string }>;
 	lessonNodes: Array<{ lessonId: string; id: string; title: string }>;
 	onClose: () => void;
-	onMove?: (file: CourseFile, category: "material" | "exam") => void;
+	onMove?: (file: CourseFile, category: "material" | "exam" | "reference") => void;
 }) {
 	if (!file) return null;
 	const name = filePathLabel(file.path);
-	const isExam = fileCategory(file) === "exam";
-	const blocks = file.status === "assigned" && !isExam ? blocksOf(file, material, nodes, lessonNodes) : [];
+	const category = fileCategory(file);
+	const isExam = category === "exam";
+	const isReference = category === "reference";
+	const blocks = file.status === "assigned" && category === "material" ? blocksOf(file, material, nodes, lessonNodes) : [];
 	const examGroups = file.status === "assigned" && isExam ? examGroupsOf(file, material, nodes) : [];
+	const referenceGroups = file.status === "assigned" && isReference ? referenceGroupsOf(file, material, nodes) : [];
+	const toc = isReference ? material.referenceIndex?.find((r) => r.path === file.path) : undefined;
 	const frame = (
 		<div
 			role="dialog"
@@ -99,6 +120,26 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 			<div className="mt-3 min-h-0 flex-1 overflow-y-auto text-xs">
 				{file.status !== "assigned" ? (
 					<p className="text-muted-foreground">No plan nodes yet.</p>
+				) : isReference ? (
+					<>
+						{toc && <p className="text-muted-foreground">Table of contents: {toc.sections.length} sections (from {toc.from})</p>}
+						{referenceGroups.length === 0 ? (
+							<p className="mt-2 text-muted-foreground">Not used for any plan node.</p>
+						) : (
+							<ul className="mt-2 space-y-3">
+								{referenceGroups.map(({ node, sections }) => (
+									<li key={node.id}>
+										<div className="font-semibold">{node.title}</div>
+										{sections.map((s) => (
+											<div key={s.id} className="mt-1 text-muted-foreground">
+												{s.label ? `§${s.label} ` : ""}{s.title} (pp. {s.startPage}–{s.endPage})
+											</div>
+										))}
+									</li>
+								))}
+							</ul>
+						)}
+					</>
 				) : isExam ? (
 						examGroups.length === 0 ? (
 							<p className="text-muted-foreground">No task patterns found.</p>
@@ -142,12 +183,12 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 				)}
 			</div>
 			<div className="mt-4 flex justify-end gap-2">
-				{onMove && (
-					<button type="button" onClick={() => onMove(file, isExam ? "material" : "exam")}
+				{onMove && (["material", "exam", "reference"] as const).filter((c) => c !== category).map((target) => (
+					<button key={target} type="button" onClick={() => onMove(file, target)}
 						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
-						{isExam ? "Move to Course material" : "Move to Exams"}
+						Move to {CATEGORY_LABEL[target]}
 					</button>
-				)}
+				))}
 				<button type="button" onClick={onClose}
 					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
 					Close

@@ -9,7 +9,7 @@ const COURSE_MATERIAL_SECTION = [
 ].join("\n");
 
 const PLANNING_BULLET =
-	"- If the session has course material, the route comes from it, not from you: read the course files before planning (pdf jobs for PDFs) and build the map along the material's own procedures, in its order and with its names. Your own knowledge checks the material and fills what it leaves open; it never replaces the material's route.";
+	"- If the session has course material, the route comes from it, not from you: read the course material files before planning (pdf jobs for PDFs) and build the map along the material's own procedures, in its order and with its names. Your own knowledge checks the material and fills what it leaves open; it never replaces the material's route.";
 
 const JOBS_SENTENCE =
 	"Files the learner names become the lesson's course material; read them with that in mind.";
