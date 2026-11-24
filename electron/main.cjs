@@ -41,7 +41,7 @@ const path = require("node:path");
 
 // Mirrors SIDEBAR_AUTOCLOSE in components/sidebar.tsx — keep in sync (the
 // renderer owns the number; this is the IPC widen target).
-const SIDEBAR_AUTOCLOSE = 928;
+const SIDEBAR_AUTOCLOSE = 880;
 
 const PRODUCT_NAME = "LearnHarness";
 
@@ -363,7 +363,7 @@ function createWindow(url, beforeLoad) {
 		// Narrow-window behavior (owner, 2026-09-17): 640px is the floor —
 		// below it even a wrapped chrome row gets cramped and the chat header
 		// (lights gutter 92 + toggle + title) runs out of room. The sidebar
-		// auto-closes below 928 = 640 + 288 (sidebar) in the renderer
+		// auto-closes below 880 = 640 + 240 (minimum sidebar) in the renderer
 		// (components/sidebar.tsx, SIDEBAR_AUTOCLOSE); its "lh:expand-window"
 		// IPC widens the window back to that threshold.
 		minWidth: 640,
@@ -817,7 +817,7 @@ async function main() {
 	});
 
 	// Sidebar-at-narrow-window (owner, 2026-09-17): the renderer auto-closes
-	// the sidebar below SIDEBAR_AUTOCLOSE (928px); opening it again at that
+	// the sidebar below SIDEBAR_AUTOCLOSE (880px); opening it again at that
 	// width asks the window to widen instead — the layout never has to
 	// accommodate a narrow window + open sidebar. Top-left stays fixed, the
 	// window grows right. No-op when already wide.

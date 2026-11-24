@@ -40,5 +40,5 @@ The left sidebar is a fixed 288 px (`w-72`, `components/sidebar.tsx`), so sessio
 
 | Part | Status |
 |---|---|
-| 1 Width model, handle, threshold | |
+| 1 Width model, handle, threshold | green (light), build-review/20261124-161940-016-part-1 + fix build-review/20261124-163557-016-part-1; final gate failed only on the flaky session-find-header Esc test, 5/5 alone and full suite green on recheck |
 | Build and install | |
