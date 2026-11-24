@@ -108,4 +108,4 @@ Regelungssysteme lesson in the installed app: open the old script's details → 
 | 2 Server, fingerprints, reader | green, build-review/20261124-133720-015-part-2 |
 | 3 Tutor note, tool, prompt | green, build-review/20261124-143312-015-part-3 |
 | 4 UI and docs | green, build-review/20261124-150500-015-part-4 |
-| Build and install | |
+| Build and install | installed 2026-11-24 16:48 |
