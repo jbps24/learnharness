@@ -19,6 +19,7 @@ import { currentUnitIndex, unitIndexOf } from "../core/units.ts";
 import { jobTools, type DemoInput, type PdfInput, type ResearchInput, type VisualInput } from "./tools/jobs.ts";
 import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
+import { suggestBreakTool } from "./tools/breaks.ts";
 import { proberGraphTools } from "./tools/graph.ts";
 import { readTool } from "./tools/read.ts";
 import { lsTool } from "./tools/ls.ts";
@@ -416,6 +417,8 @@ export interface TeacherToolContext extends PlanToolContext {
 	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput | PdfInput) => void;
 	/** Retained search-status seam; research dispatch is available keylessly. */
 	searchAvailable?: () => boolean;
+	breaks: () => { enabled: boolean; intervalMinutes: number; lengthMinutes: number };
+	now: () => number;
 }
 
 /**
@@ -478,6 +481,12 @@ export function createTeacherTools(
 			show_image: createShowImageTool(ctx),
 			...planTools(ctx),
 			...jobTools({ chatId: ctx.chatId, jobStore: ctx.jobStore, spawn: ctx.spawn, searchAvailable: ctx.searchAvailable }),
+			...suggestBreakTool({
+				chatId: ctx.chatId,
+				chatStore: ctx.chatStore,
+				breaks: ctx.breaks,
+				now: ctx.now,
+			}),
 		},
 		withoutMechanics(enabled),
 		),

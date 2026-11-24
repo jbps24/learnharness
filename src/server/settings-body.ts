@@ -19,6 +19,7 @@ import type {
 	AgentSettings,
 	AppearanceSettings,
 	BackgroundModelRole,
+	BreakSettings,
 	CompactionSettings,
 	CustomModelOverride,
 	GeneralSettings,
@@ -28,7 +29,7 @@ import type {
 	ModelSlot,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { BACKGROUND_MODEL_ROLES, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isTranscriptMaxWidth, MODEL_SLOTS, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
+import { BACKGROUND_MODEL_ROLES, BREAK_INTERVAL_RANGE, BREAK_LENGTH_RANGE, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isTranscriptMaxWidth, MODEL_SLOTS, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 import { isSearchEngineId, SEARCH_ENGINES } from "../core/search.ts";
 import { isDictationLanguage } from "../core/dictation.ts";
@@ -460,6 +461,40 @@ export function parseCompactionSettingsBody(body: unknown): SettingsBodyResult<C
 	return { ok: true, settings };
 }
 
+/** breaks: { enabled?, intervalMinutes?, lengthMinutes? }. Strict write side:
+ *  the interval is a whole multiple of its step inside its range, the length
+ *  a whole number inside its range (the read side clamps, this rejects). */
+export function parseBreaksSettingsBody(body: unknown): SettingsBodyResult<BreakSettings> {
+	const raw = asRecord(body);
+	if (!raw) return { ok: false, error: "Invalid JSON body" };
+	const settings: BreakSettings = {};
+	if (raw.enabled !== undefined) {
+		if (typeof raw.enabled !== "boolean") return { ok: false, error: "enabled must be true or false" };
+		settings.enabled = raw.enabled;
+	}
+	if (raw.intervalMinutes !== undefined) {
+		const v = raw.intervalMinutes;
+		if (
+			typeof v !== "number" ||
+			!Number.isInteger(v) ||
+			v < BREAK_INTERVAL_RANGE.min ||
+			v > BREAK_INTERVAL_RANGE.max ||
+			v % BREAK_INTERVAL_RANGE.step !== 0
+		) {
+			return { ok: false, error: "intervalMinutes must be a multiple of 5 between 20 and 90" };
+		}
+		settings.intervalMinutes = v;
+	}
+	if (raw.lengthMinutes !== undefined) {
+		const v = raw.lengthMinutes;
+		if (typeof v !== "number" || !Number.isInteger(v) || v < BREAK_LENGTH_RANGE.min || v > BREAK_LENGTH_RANGE.max) {
+			return { ok: false, error: "lengthMinutes must be an integer between 5 and 20" };
+		}
+		settings.lengthMinutes = v;
+	}
+	return { ok: true, settings };
+}
+
 /** dictation: { language?: one of Nova-3's supported language codes } */
 export function parseDictationSettingsBody(body: unknown): SettingsBodyResult<DictationSettings> {
 	const raw = asRecord(body);
@@ -517,6 +552,7 @@ export const SETTINGS_SECTIONS = {
 	appearance: parseAppearanceSettingsBody,
 	graph: parseGraphSettingsBody,
 	compaction: parseCompactionSettingsBody,
+	breaks: parseBreaksSettingsBody,
 	models: parseModelsSettingsBody,
 	dictation: parseDictationSettingsBody,
 	claudeCode: parseClaudeCodeSettingsBody,

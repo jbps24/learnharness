@@ -8,6 +8,7 @@ import { createCanvas } from "@napi-rs/canvas";
 import { createFauxCore } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ChatStore, JobStore } from "../src/core/ports.ts";
+import { BREAK_DEFAULTS } from "../src/core/settings.ts";
 
 // Set this test process's locations BEFORE importing config/agent modules.
 // Never read or modify the developer's actual home, keys or learning data.
@@ -202,7 +203,7 @@ describe("source access: canonical roots and all tool paths", () => {
 	}
 
 	it("applies unchanged to prober, teacher and practice registrations and model-bound reads", async () => {
-		const ctx = { chatId: "synthetic", chatStore: { getChat: () => null } as unknown as ChatStore, jobStore: {} as JobStore, spawn: () => {}, deliver: () => {} };
+		const ctx = { chatId: "synthetic", chatStore: { getChat: () => null } as unknown as ChatStore, jobStore: {} as JobStore, spawn: () => {}, deliver: () => {}, breaks: () => ({ ...BREAK_DEFAULTS }), now: () => 1_000_000 };
 		for (const tools of [createProberTools(ctx), createTeacherTools(ctx), practiceTools(ctx)]) {
 			await assert.rejects(tools.read!.execute!("s", { path: auth }), denied);
 			await assert.rejects(tools.ls!.execute!("s", { path: "~/.ssh" }), denied);

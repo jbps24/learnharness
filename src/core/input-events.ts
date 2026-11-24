@@ -39,6 +39,7 @@ import {
 	isSideQuestionMarker,
 	danglingQuestionOf,
 	newAnswerResult,
+	newBreakEndedMessage,
 	newNextMessage,
 	newProblemDismissedMarker,
 	newThinkingMessage,
@@ -48,6 +49,7 @@ import {
 	pluginQuestionCallsOf,
 	pendingProblemDismissalOf,
 } from "./native-messages.ts";
+import { breakState, breakTimings } from "./breaks.ts";
 import { QUESTION_TOOLS, toolQuestionKind } from "./pending.ts";
 import { isPluginQuestionJson, type JsonValue, type PluginQuestionOccurrence } from "./plugin-questions.ts";
 import { preparePluginProblemSubmissionImages, type PluginProblemSubmissionImages } from "./plugin-submissions.ts";
@@ -76,7 +78,9 @@ export type ChatInput =
 	 *  explicit go-ahead during the between-problems pause — the Next
 	 *  chip or Enter on an empty composer. Practice sessions only, and
 	 *  only with nothing active (mid-problem input rides the dock). */
-	| { type: "next" };
+	| { type: "next" }
+	/** Resume after a taken break (plan 002 part 4). */
+	| { type: "break-continue"; toolCallId: string };
 
 /** A wake-pipeline steer delivery — same turn composition, server-origin.
  *  Wave C (2026-09-26): the idle wake carries EVERY queued marker as its
@@ -282,6 +286,9 @@ export function parseChatInput(input: unknown): ChatInput {
 		}
 		case "next":
 			return { type: "next" };
+		case "break-continue":
+			if (typeof i.toolCallId !== "string" || !i.toolCallId) throw new ChatInputError("break-continue input requires toolCallId");
+			return { type: "break-continue", toolCallId: i.toolCallId };
 		default:
 			throw new ChatInputError(`unknown input type: ${String(i.type)}`);
 	}
@@ -299,6 +306,7 @@ export function parseChatInput(input: unknown): ChatInput {
 export function inputAppends(
 	record: { messages: LhMessage[]; kind?: string },
 	input: ChatInput,
+	_now: number = Date.now(),
 ): LhMessage[] {
 	assertPluginQuestionInputAllowed(record.messages, input);
 	assertNativeSubmissionTarget(record.messages, input);
@@ -344,6 +352,21 @@ export function inputAppends(
 				throw new ChatInputError("next input requires no active problem");
 			}
 			return [...dismissalConclusion(record), newNextMessage()];
+		}
+		case "break-continue": {
+			const latest = breakState(record.messages, undefined, breakTimings({ intervalMinutes: 45, lengthMinutes: 10 }), true, _now).latest;
+			if (!latest || latest.outcome !== "taken" || latest.toolCallId !== input.toolCallId || latest.takenAt === undefined) {
+				throw new ChatInputError("No break is running.");
+			}
+			const breakMs = _now - latest.takenAt;
+			const seconds = Math.floor(breakMs / 1000);
+			const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+			return [newBreakEndedMessage(
+				input.toolCallId,
+				breakMs,
+				`[Session note] The learner is back from a ${clock} break. Re-orient them in one line (where we are, what's next), then continue teaching.`,
+				_now,
+			)];
 		}
 	}
 }
@@ -399,7 +422,7 @@ export function questionRecoveryAppends(
 export function failedResponseAtEnd(messages: readonly LhMessage[]): Extract<LhMessage, { role: "assistant" }> | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const m = messages[i]!;
-		if (m.role === "custom" && (m.customType === "plan-block" || m.customType === "compaction" || m.customType === "lesson-record" || m.customType === "units-note" || isSideQuestionMarker(m))) continue;
+		if (m.role === "custom" && (m.customType === "plan-block" || m.customType === "compaction" || m.customType === "lesson-record" || m.customType === "units-note" || m.customType === "break-note" || isSideQuestionMarker(m))) continue;
 		return m.role === "assistant" && m.stopReason === "error" ? m : undefined;
 	}
 	return undefined;

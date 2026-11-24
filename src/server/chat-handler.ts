@@ -56,9 +56,10 @@ import { SIDE_CONTEXT_BUDGET_ERROR, sideBudgetRetryDrops, sideContextWindow } fr
 import { registerTurn, rememberTurnFailure, unregisterTurn } from "./turn-runs.ts";
 import { persistTurn, triggerExtraction, TurnPersistenceError } from "./turn-service.ts";
 import { hasProbeDone, hasUnresolvedQuestion, newUnitsNoteMessage, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
+import { breakNotesFor, breakTimings } from "../core/breaks.ts";
 import { samePluginQuestionOccurrence } from "../core/plugin-questions.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
-import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight } from "./compaction.ts";
+import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight, type CompactionDeps } from "./compaction.ts";
 import { COMPACTION_RESERVE_TOKENS } from "../core/compaction.ts";
 import { catalogContextLimits, refreshConnectionCatalog } from "./model-catalog.ts";
 import { emit } from "../core/events.ts";
@@ -179,6 +180,32 @@ setJobRespawn((jobId) => void jobRunner.runJob(jobId));
 // built in this composition root, so the seam is installed here — the
 // tools read it fresh per call (allowed folders + the app's private paths).
 setFileAccessPolicy(fileAccessPolicy);
+
+/** Build CompactionDeps for background maintenance (settle kick or break cut prep), or null when unavailable. */
+export function backgroundCompactionDeps(chatId: string): CompactionDeps | null {
+	const fresh = effectiveSettings();
+	const spec = resolveConversationSpec(stores.chatStore.getChat(chatId)?.settings, fresh.models.strong);
+	if (!spec || !connectionBackgroundAllowed(spec.provider)) return null;
+	let kickEngine: PiEngine;
+	try { kickEngine = piEngineForSpec(spec, true, undefined, retentionForSlot("strong")); } catch { return null; }
+	const kickModelId = `${kickEngine.model.provider}:${kickEngine.model.id}`;
+	const freshRecord = stores.chatStore.getChat(chatId);
+	if (!freshRecord) return null;
+	const kickInstructions = composeInstructions(freshRecord.kind === "practice" ? "practice" : "teacher");
+	return {
+		chatStore: stores.chatStore,
+		engine: kickEngine,
+		canStart: () => !isTurnRunning(chatId) && connectionBackgroundAllowed(spec.provider),
+		modelId: kickModelId,
+		kind: freshRecord.kind === "practice" ? "practice" : hasProbeDone(freshRecord.messages) ? "teach" : "probe",
+		includeReasoning: fresh.compaction.includeReasoning,
+		thresholdTokens: effectiveThresholdTokens(
+			fresh.compaction?.thresholdTokens,
+			catalogContextLimits().get(kickModelId),
+		),
+		systemPromptTokens: Math.ceil(kickInstructions.length / 4),
+	};
+}
 
 /** The route-facing entry: parse {chatId, input} and run one turn. */
 export async function handleChatRequest(
@@ -584,6 +611,14 @@ export async function handleChatInput(
 		&& record.tree && record.tree.nodes.length >= 1 && !record.tree.units
 		&& !record.messages.some((m) => m.role === "custom" && m.customType === "units-note")
 	) appends = [...appends, newUnitsNoteMessage()];
+	// Plan 002 part 4 (choice 8): break notes ride learner inputs of a teaching turn only.
+	if (
+		record.kind !== "practice"
+		&& (input.type === "text" || input.type === "answer" || input.type === "plugin-question-answer"
+			|| input.type === "plugin-problem-submission" || input.type === "thinking")
+	) {
+		appends = [...appends, ...breakNotesFor([...record.messages, ...appends], record.sideChats, breakTimings(effective.breaks), effective.breaks.enabled, Date.now())];
+	}
 	const afterInput = [...record.messages, ...appends];
 	const sideQuestions = hasUnresolvedQuestion(afterInput) ? [] : sideConversationEntries({
 		messages: record.messages, sideChats: sideContextSnapshots,
@@ -775,6 +810,8 @@ export async function handleChatInput(
 						// The registry drop's signal (2026-09-20): no live engine
 						// = no research tool in the teacher's registry.
 						searchAvailable,
+						breaks: () => effectiveSettings().breaks,
+						now: Date.now,
 					},
 					agentOpts,
 				)
@@ -931,29 +968,7 @@ export async function handleChatInput(
 				// tests (the extraction precedent — scripted chats are
 				// fixtures; the service itself is pinned directly).
 				if (process.env.NODE_ENV !== "test" && !pendingSideBudgetError && (!requestCycle || requestCycle.dispatched))
-					kickCompaction(() => {
-						const fresh = effectiveSettings();
-						const spec = resolveConversationSpec(stores.chatStore.getChat(chatId)?.settings, fresh.models.strong);
-						if (!spec || !connectionBackgroundAllowed(spec.provider)) return null;
-						let kickEngine: PiEngine;
-						try { kickEngine = piEngineForSpec(spec, true, undefined, retentionForSlot("strong")); } catch { return null; }
-						const kickModelId = `${kickEngine.model.provider}:${kickEngine.model.id}`;
-						const freshRecord = stores.chatStore.getChat(chatId);
-						if (!freshRecord) return null;
-						return {
-							chatStore: stores.chatStore,
-							engine: kickEngine,
-							canStart: () => !isTurnRunning(chatId) && connectionBackgroundAllowed(spec.provider),
-							modelId: kickModelId,
-							kind: freshRecord.kind === "practice" ? "practice" : hasProbeDone(freshRecord.messages) ? "teach" : "probe",
-							includeReasoning: fresh.compaction.includeReasoning,
-							thresholdTokens: effectiveThresholdTokens(
-								fresh.compaction?.thresholdTokens,
-								catalogContextLimits().get(kickModelId),
-							),
-							systemPromptTokens: Math.ceil(composeInstructions(freshRecord.kind === "practice" ? "practice" : "teacher").length / 4),
-						};
-					}, chatId);
+					kickCompaction(() => backgroundCompactionDeps(chatId), chatId);
 			},
 		});
 		// The turn is now a live background object: register it so any view

@@ -33,6 +33,7 @@ import { Value } from "typebox/value";
 import { createFauxCore, fauxAssistantMessage, fauxToolCall, type FauxResponseStep, type ToolCall } from "@earendil-works/pi-ai";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PATHS } from "../config.ts";
+import { BREAK_DEFAULTS } from "../src/core/settings.ts";
 import {
 	buildDemoSrcDoc,
 	DEMO_BRIDGE_SCRIPT,
@@ -1013,6 +1014,8 @@ describe("demo/visual job runners", () => {
 							chatStore,
 							jobStore,
 							spawn: (job, input) => void runner.runJob(job.id, input),
+							breaks: () => ({ ...BREAK_DEFAULTS }),
+							now: () => 1_000_000,
 						}),
 					}),
 			);

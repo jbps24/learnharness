@@ -1,5 +1,5 @@
 import type { LessonRecordDetails } from "./contracts/chat.ts";
-import type { PlanTree } from "./contracts/plan.ts";
+import { derivePlanStatusesLh, type PlanTree } from "./contracts/plan.ts";
 import type { LhMarkerMessage, LhMessage } from "./native-messages.ts";
 import { readPluginQuestionMessageAnnotation } from "./plugin-questions.ts";
 
@@ -67,4 +67,12 @@ export function finishedUnitIds(messages: readonly LhMessage[]): string[] {
 export function unitCutDue(tree: PlanTree, messages: readonly LhMessage[]): boolean {
 	const cur = currentUnitIndex(tree, messages);
 	return cur !== null && cur > finishedUnitIds(messages).length;
+}
+
+/** True when the tree has units, a next unit exists, and every node of the current unit is visited or current. */
+export function atUnitEnd(tree: PlanTree, messages: readonly LhMessage[]): boolean {
+	const cur = currentUnitIndex(tree, messages);
+	if (cur === null || !tree.units || cur + 1 >= tree.units.length) return false;
+	const statuses = derivePlanStatusesLh(tree, messages);
+	return tree.units[cur]!.nodeIds.every((id) => statuses.current === id || statuses.visited.has(id));
 }

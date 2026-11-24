@@ -39,6 +39,7 @@ import { useInteractionLayers, type CloseOutcome } from "@/components/interactio
 import {
 	CURRENT_SETTINGS_VERSION,
 	type AppearanceSettings,
+	type BreakSettings,
 	type CompactionSettings,
 	type GraphSettings,
 	type UserSettings,
@@ -307,7 +308,7 @@ export function SettingsDialogBody({
 	 *  schema mistake caught by the validation surface). */
 	const write = useCallback(
 		async (
-			section: "general" | "agent" | "models" | "appearance" | "graph" | "compaction",
+			section: "general" | "agent" | "models" | "appearance" | "graph" | "compaction" | "breaks",
 			body: object,
 			confirms?: (stored: UserSettings) => boolean,
 		): Promise<boolean> => {
@@ -513,6 +514,7 @@ export function SettingsDialogBody({
 										models={record.models}
 										graph={record.graph}
 										compaction={record.compaction}
+										breaks={record.breaks}
 										onModelsChange={(next: ModelsSettings) =>
 											void write("models", next)
 										}
@@ -522,6 +524,9 @@ export function SettingsDialogBody({
 										onDeletePromptOverride={deletePromptOverride}
 										onCompactionChange={(next: CompactionSettings) =>
 											write("compaction", next)
+										}
+										onBreaksChange={(next: BreakSettings) =>
+											write("breaks", next)
 										}
 									/>
 								</SettingsSection>
