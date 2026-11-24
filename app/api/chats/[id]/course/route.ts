@@ -9,7 +9,10 @@
  * PATCH → { path, binding }: the sidebar tick. Changes only `binding`.
  *         { path, category }: moves the file between Course material and
  *         Exams (plan 010) or Reference (plan 012); resets it to pending and queues it again.
- *         Both keys in one body: 400.
+ *         { path, retry: true }: plan 013. Sets a failed, ticked file back to
+ *         pending (error removed) and queues it again; 409 if it is not
+ *         failed or not ticked.
+ *         More than one of binding, category, retry in one body: 400.
  */
 import { emit, fileCategory } from "@/src/core";
 import { assignAddedCourseFiles, stores } from "@/src/server";
@@ -45,22 +48,36 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 	const { id } = await ctx.params;
 	const record = stores.chatStore.getChat(id);
 	if (!record) return Response.json({ error: "Unknown chat" }, { status: 404 });
-	const body = (await request.json().catch(() => null)) as { path?: unknown; binding?: unknown; category?: unknown } | null;
+	const body = (await request.json().catch(() => null)) as { path?: unknown; binding?: unknown; category?: unknown; retry?: unknown } | null;
 	const isObject = typeof body === "object" && body !== null && !Array.isArray(body);
 	const hasCategory = isObject && "category" in body;
 	const hasBinding = isObject && "binding" in body;
+	const hasRetry = isObject && "retry" in body;
 	if (
 		!isObject ||
 		typeof body.path !== "string" ||
-		hasCategory === hasBinding ||
+		Number(hasCategory) + Number(hasBinding) + Number(hasRetry) !== 1 ||
 		(hasBinding && typeof body.binding !== "boolean") ||
+		(hasRetry && body.retry !== true) ||
 		(hasCategory && body.category !== "material" && body.category !== "exam" && body.category !== "reference")
 	) {
-		return Response.json({ error: "Expected { path: string, binding: boolean } or { path: string, category: \"material\" | \"exam\" | \"reference\" }" }, { status: 400 });
+		return Response.json({ error: "Expected { path: string, binding: boolean }, { path: string, category: \"material\" | \"exam\" | \"reference\" } or { path: string, retry: true }" }, { status: 400 });
 	}
 	const material = record.courseMaterial;
 	const target = material?.files.find((file) => file.path === body.path);
 	if (!material || !target) return Response.json({ error: "Unknown course file" }, { status: 404 });
+	if (hasRetry) {
+		if (target.status !== "failed") return Response.json({ error: "Only a failed course file can be retried." }, { status: 409 });
+		if (!target.binding) return Response.json({ error: "Tick the file to read it again." }, { status: 409 });
+		const { error: _error, ...rest } = target;
+		stores.chatStore.setCourseMaterial(id, {
+			...material,
+			files: material.files.map((file) => (file.path === target.path ? { ...rest, status: "pending" as const } : file)),
+		});
+		emit("course-material-changed", { chatId: id });
+		assignAddedCourseFiles(id, [target.path]);
+		return Response.json({ ok: true });
+	}
 	if (hasCategory) {
 		const category = body.category as "material" | "exam" | "reference";
 		if (fileCategory(target) === category) return Response.json({ ok: true });

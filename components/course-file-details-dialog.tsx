@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { HostDialog } from "@/components/host-dialog";
 import { fileCategory, filePathLabel } from "@/src/core";
 import type { CourseFile, CourseFileStatus, CourseMaterial } from "@/src/core";
@@ -14,6 +14,8 @@ export const STATUS_LABEL: Record<CourseFileStatus, string> = {
 };
 
 export const CONFLICT_TIP = "Your tutor will ask which route your course uses.";
+export const RETRY_FAILED_TEXT = "Could not retry. Try again.";
+export const RETRY_UNTICKED_TIP = "Tick the file to read it again.";
 
 interface Block {
 	key: string;
@@ -84,14 +86,21 @@ const CATEGORY_LABEL = { material: "Course material", exam: "Exams", reference: 
 /** One file's details (plan 009 part 2): path, status and, once assigned, each
  *  plan node's pages and method text; for an exam file the task patterns
  *  (plan 010 part 4) and the move button. Reads the panel's data; no fetch. */
-export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, onClose, onMove }: {
+export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, onClose, onMove, onRetry }: {
 	file: CourseFile | null;
 	material: CourseMaterial;
 	nodes: Array<{ id: string; title: string }>;
 	lessonNodes: Array<{ lessonId: string; id: string; title: string }>;
 	onClose: () => void;
 	onMove?: (file: CourseFile, category: "material" | "exam" | "reference") => void;
+	onRetry?: (file: CourseFile) => Promise<boolean>;
 }) {
+	const [retryFailed, setRetryFailed] = useState(false);
+	const [retryPath, setRetryPath] = useState(file?.path);
+	if (retryPath !== file?.path) {
+		setRetryPath(file?.path);
+		setRetryFailed(false);
+	}
 	if (!file) return null;
 	const name = filePathLabel(file.path);
 	const category = fileCategory(file);
@@ -122,7 +131,7 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 					<p className="text-muted-foreground">No plan nodes yet.</p>
 				) : isReference ? (
 					<>
-						{toc && <p className="text-muted-foreground">Table of contents: {toc.sections.length} sections (from {toc.from})</p>}
+						{toc && <p className="text-muted-foreground">Table of contents: {toc.sections.length === 1 ? "1 section" : `${toc.sections.length} sections`} (from {toc.from})</p>}
 						{referenceGroups.length === 0 ? (
 							<p className="mt-2 text-muted-foreground">Not used for any plan node.</p>
 						) : (
@@ -183,6 +192,15 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 				)}
 			</div>
 			<div className="mt-4 flex justify-end gap-2">
+				{retryFailed && <span className="mr-auto self-center text-xs text-destructive">{RETRY_FAILED_TEXT}</span>}
+				{onRetry && file.status === "failed" && (
+					<button type="button" disabled={!file.binding}
+						title={file.binding ? undefined : RETRY_UNTICKED_TIP}
+						onClick={() => void onRetry(file).then((ok) => setRetryFailed(!ok))}
+						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50">
+						Retry
+					</button>
+				)}
 				{onMove && (["material", "exam", "reference"] as const).filter((c) => c !== category).map((target) => (
 					<button key={target} type="button" onClick={() => onMove(file, target)}
 						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">

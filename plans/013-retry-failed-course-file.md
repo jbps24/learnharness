@@ -63,6 +63,6 @@ In the installed app, Speech Signal Processing lesson: the failed file's chip op
 
 | Part | Status |
 |---|---|
-| 1 API retry | |
-| 2 UI popover, dialog, "1 section" | |
+| 1 API retry | green, build-review/20261124-110210-013-part-1 |
+| 2 UI popover, dialog, "1 section" | green, build-review/20261124-111133-013-part-2 |
 | 3 Docs, build, install | |
