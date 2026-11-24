@@ -54,6 +54,6 @@ The Files panel can untick a course file but not remove it. The learner wants to
 
 | Part | Status |
 |---|---|
-| 1 API and queue | |
-| 2 UI remove from dialog | |
+| 1 API and queue | green, build-review/20261124-122016-014-part-1 |
+| 2 UI remove from dialog | green, build-review/20261124-125714-014-part-2 |
 | Build and install | |

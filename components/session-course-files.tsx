@@ -148,6 +148,19 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 		}
 	};
 
+	const removeFile = async (file: CourseFile): Promise<boolean> => {
+		try {
+			const res = await fetch(`/api/chats/${chatId}/course`, {
+				method: "DELETE",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ path: file.path }),
+			});
+			return res.ok;
+		} catch {
+			return false;
+		}
+	};
+
 	const toggleOpen = () => {
 		const next = !open;
 		setOpen(next);
@@ -240,7 +253,7 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 			{hint && <div className="mt-1 text-muted-foreground">{hint}</div>}
 			<CourseFileDetailsDialog file={files.find((f) => f.path === detailsPath) ?? null}
 				material={data.material} nodes={data.nodes} lessonNodes={data.lessonNodes ?? []}
-				onClose={() => setDetailsPath(null)} onMove={(f, category) => void moveFile(f, category)} onRetry={retryFile} />
+				onClose={() => setDetailsPath(null)} onMove={(f, category) => void moveFile(f, category)} onRetry={retryFile} onRemove={removeFile} />
 		</div>
 	);
 }

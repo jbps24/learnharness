@@ -160,6 +160,11 @@ export function assignAddedCourseFiles(chatId: string, added: readonly string[])
 	if (targets.length > 0) void courseAssignQueue.enqueue(chatId, targets);
 }
 
+/** Plan 014 part 1: cancel any queued or running assignment for a removed course file. */
+export function cancelCourseFile(chatId: string, path: string): void {
+	courseAssignQueue.cancel(chatId, path);
+}
+
 /** Plan 007 part 3, trigger 2/3: a plan_init saved a new tree. */
 function assignAfterPlanInit(chatId: string, previousTree: PlanTree | undefined, nextTree: PlanTree): void {
 	const material = stores.chatStore.getChat(chatId)?.courseMaterial;

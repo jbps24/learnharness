@@ -13,9 +13,12 @@
  *         pending (error removed) and queues it again; 409 if it is not
  *         failed or not ticked.
  *         More than one of binding, category, retry in one body: 400.
+ * DELETE → { path }: plan 014. Removes the file and every stored entry that
+ *         names it, and cancels its queued or running assignment; 400 for a
+ *         malformed body, 404 for an unknown chat or path.
  */
-import { emit, fileCategory } from "@/src/core";
-import { assignAddedCourseFiles, stores } from "@/src/server";
+import { emit, fileCategory, removeCourseFile } from "@/src/core";
+import { assignAddedCourseFiles, cancelCourseFile, stores } from "@/src/server";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
 	const { id } = await ctx.params;
@@ -108,6 +111,23 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 		...material,
 		files: material.files.map((file) => (file.path === target.path ? { ...file, binding } : file)),
 	});
+	emit("course-material-changed", { chatId: id });
+	return Response.json({ ok: true });
+}
+
+export async function DELETE(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
+	const { id } = await ctx.params;
+	const record = stores.chatStore.getChat(id);
+	if (!record) return Response.json({ error: "Unknown chat" }, { status: 404 });
+	const body = (await request.json().catch(() => null)) as { path?: unknown } | null;
+	if (typeof body !== "object" || body === null || Array.isArray(body) || typeof body.path !== "string") {
+		return Response.json({ error: "Expected { path: string }" }, { status: 400 });
+	}
+	const path = body.path;
+	const material = record.courseMaterial;
+	if (!material?.files.some((file) => file.path === path)) return Response.json({ error: "Unknown course file" }, { status: 404 });
+	stores.chatStore.setCourseMaterial(id, removeCourseFile(material, path));
+	cancelCourseFile(id, path);
 	emit("course-material-changed", { chatId: id });
 	return Response.json({ ok: true });
 }
