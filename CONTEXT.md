@@ -98,6 +98,14 @@ _Avoid_: Bookmark, citation
 The wire-only note that tells the tutor the course methods for a node (or the unresolved conflict). It is sent again when the node's methods change or a lesson-record cut drops it.
 _Avoid_: Method hint
 
+**Course update**:
+A replaced course file's changes per plan node, kept until the tutor has handled them.
+_Avoid_: Diff, changelog
+
+**Replacement**:
+A newer version of a course file taking the old one's place in the list.
+_Avoid_: Re-upload, overwrite
+
 **Learner input**:
 Anything the learner contributes to a session: a typed message, an answer to a question or check, an explain-back, a practice submission, a plugin answer, or a steer.
 _Avoid_: User message (only one kind of input)

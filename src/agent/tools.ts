@@ -21,6 +21,7 @@ import { planTools, type PlanToolContext } from "./tools/plan.ts";
 import { probeDoneTool, type ProbeDoneContext } from "./tools/probe.ts";
 import { suggestBreakTool } from "./tools/breaks.ts";
 import { courseRouteTool } from "./tools/course-route.ts";
+import { courseUpdateTool } from "./tools/course-update.ts";
 import { proberGraphTools } from "./tools/graph.ts";
 import { readTool } from "./tools/read.ts";
 import { lsTool } from "./tools/ls.ts";
@@ -489,6 +490,7 @@ export function createTeacherTools(
 				now: ctx.now,
 			}),
 			...courseRouteTool({ chatId: ctx.chatId, chatStore: ctx.chatStore }),
+			...courseUpdateTool({ chatId: ctx.chatId, chatStore: ctx.chatStore }),
 		},
 		withoutMechanics(enabled),
 		),

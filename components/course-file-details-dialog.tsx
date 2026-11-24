@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { HostDialog } from "@/components/host-dialog";
 import { fileCategory, filePathLabel } from "@/src/core";
 import type { CourseFile, CourseFileStatus, CourseMaterial } from "@/src/core";
@@ -87,7 +87,7 @@ const CATEGORY_LABEL = { material: "Course material", exam: "Exams", reference: 
 /** One file's details (plan 009 part 2): path, status and, once assigned, each
  *  plan node's pages and method text; for an exam file the task patterns
  *  (plan 010 part 4) and the move button. Reads the panel's data; no fetch. */
-export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, onClose, onMove, onRetry, onRemove }: {
+export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, onClose, onMove, onRetry, onRemove, onReplace }: {
 	file: CourseFile | null;
 	material: CourseMaterial;
 	nodes: Array<{ id: string; title: string }>;
@@ -96,7 +96,11 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 	onMove?: (file: CourseFile, category: "material" | "exam" | "reference") => void;
 	onRetry?: (file: CourseFile) => Promise<boolean>;
 	onRemove?: (file: CourseFile) => Promise<boolean>;
+	/** Resolves to the route's error text, or null when the replacement went through. */
+	onReplace?: (file: CourseFile, newPath: string) => Promise<string | null>;
 }) {
+	const [replaceError, setReplaceError] = useState<string | null>(null);
+	const replaceInput = useRef<HTMLInputElement>(null);
 	const [retryFailed, setRetryFailed] = useState(false);
 	const [confirmingRemove, setConfirmingRemove] = useState(false);
 	const [removeFailed, setRemoveFailed] = useState(false);
@@ -106,8 +110,30 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 		setRetryFailed(false);
 		setConfirmingRemove(false);
 		setRemoveFailed(false);
+		setReplaceError(null);
 	}
 	if (!file) return null;
+	const canReplace = Boolean(onReplace) && typeof window !== "undefined" && Boolean(window.lh?.getPathForFile);
+	const pickReplacement = async (picked: File | undefined) => {
+		const resolve = window.lh?.getPathForFile;
+		if (!picked || !resolve || !onReplace) return;
+		const path = resolve(picked);
+		if (!path) {
+			setReplaceError("Could not read the path of that file.");
+			return;
+		}
+		setReplaceError(await onReplace(file, path));
+	};
+	const update = file.update;
+	const titleOf = (nodeId: string) => nodes.find((n) => n.id === nodeId)?.title ?? nodeId;
+	const updateGroups = update?.nodes
+		? [
+			{ label: "Changed route", items: update.nodes.filter((n) => n.kind === "changed").map((n) => ({ key: n.nodeId, title: titleOf(n.nodeId), pages: undefined as string | undefined, pointed: update.revisited.includes(n.nodeId) })) },
+			{ label: "Newly covered", items: update.nodes.filter((n) => n.kind === "new").map((n) => ({ key: n.nodeId, title: titleOf(n.nodeId), pages: undefined as string | undefined, pointed: false })) },
+			{ label: "No longer covered", items: update.nodes.filter((n) => n.kind === "dropped").map((n) => ({ key: n.nodeId, title: titleOf(n.nodeId), pages: undefined as string | undefined, pointed: false })) },
+			{ label: "Sections outside the plan", items: (update.newSections ?? []).map((s) => ({ key: `${s.title}\u0000${s.pages}`, title: s.title, pages: s.pages as string | undefined, pointed: false })) },
+		].filter((g) => g.items.length > 0)
+		: [];
 	const name = filePathLabel(file.path);
 	const category = fileCategory(file);
 	const isExam = category === "exam";
@@ -133,6 +159,28 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 				{file.via === "inherited" && <span className="text-muted-foreground"> · from lesson</span>}
 			</div>
 			<div className="mt-3 min-h-0 flex-1 overflow-y-auto text-xs">
+				{update && category === "material" && (
+					<div className="mb-3">
+						<p className="text-muted-foreground">
+							Replaced {filePathLabel(update.fromPath)} on {new Date(update.at).toLocaleDateString()}.
+						</p>
+						{file.status === "assigning" && <p className="mt-1 text-muted-foreground">Comparing with the earlier version…</p>}
+						{updateGroups.map((g) => (
+							<div key={g.label} className="mt-2">
+								<div className="font-semibold">{g.label}</div>
+								<ul className="mt-1 space-y-0.5">
+									{g.items.map((item) => (
+										<li key={item.key}>
+											<span>{item.title}</span>
+											{item.pages && <span className="text-muted-foreground"> {item.pages}</span>}
+											{item.pointed && <span className="text-muted-foreground"> · pointed out</span>}
+										</li>
+									))}
+								</ul>
+							</div>
+						))}
+					</div>
+				)}
 				{file.status !== "assigned" ? (
 					<p className="text-muted-foreground">No plan nodes yet.</p>
 				) : isReference ? (
@@ -214,6 +262,18 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 					</div>
 				</div>
 			) : (
+			<>
+			{canReplace && (
+				<div className="mt-3 text-xs">
+					<input ref={replaceInput} type="file" accept=".pdf,.md,.markdown,.txt,.tex" hidden
+						onChange={(e) => { const picked = e.target.files?.[0]; e.target.value = ""; void pickReplacement(picked); }} />
+					<button type="button" onClick={() => replaceInput.current?.click()}
+						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+						Replace with newer version…
+					</button>
+					{replaceError && <p className="mt-1 text-destructive">{replaceError}</p>}
+				</div>
+			)}
 			<div className="mt-4 flex justify-end gap-2">
 				{retryFailed && <span className="mr-auto self-center text-xs text-destructive">{RETRY_FAILED_TEXT}</span>}
 				{onRemove && (
@@ -241,6 +301,7 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 					Close
 				</button>
 			</div>
+			</>
 			)}
 		</div>
 	);

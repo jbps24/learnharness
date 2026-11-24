@@ -76,6 +76,46 @@ function FailedChip({ file, binding, onRetry }: {
 	);
 }
 
+/** A file changed on disk: a chip button opening a popover with Update (plan 015 part 4). */
+function ChangedChip({ file, onUpdate }: {
+	file: CourseFile;
+	onUpdate: (file: CourseFile) => Promise<string | null>;
+}) {
+	const [open, setOpen] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const rootRef = useRef<HTMLSpanElement>(null);
+	const panelRef = useRef<HTMLDivElement>(null);
+	const close = useCallback(() => setOpen(false), []);
+	usePopoverDismiss(rootRef, open, close, { layerRootRef: panelRef });
+
+	const update = async () => {
+		const failure = await onUpdate(file);
+		setError(failure);
+		if (!failure) setOpen(false);
+	};
+
+	return (
+		<span ref={rootRef} className="relative shrink-0">
+			<button type="button" aria-haspopup="dialog" aria-expanded={open}
+				onClick={() => { if (!open) setError(null); setOpen(!open); }}
+				className="rounded bg-muted px-1 text-muted-foreground hover:underline">
+				changed
+			</button>
+			{open && (
+				<div ref={panelRef} role="dialog"
+					className="absolute left-0 top-full z-50 mt-1 w-56 rounded-md border bg-card p-2 text-xs shadow-md">
+					<p className="break-words">This file changed on disk since it was read.</p>
+					{error && <p className="mt-1 text-destructive">{error}</p>}
+					<button type="button" onClick={() => void update()}
+						className="mt-2 rounded-sm px-2 py-1 text-muted-foreground transition-colors hover:text-foreground">
+						Update
+					</button>
+				</div>
+			)}
+		</span>
+	);
+}
+
 /** The open session's course files (plan 007 part 7): tick, status,
  *  unresolved-conflict marks, and a details dialog per file (plan 009). */
 export function SessionCourseFiles({ chatId, active }: { chatId: string; active: boolean }) {
@@ -161,6 +201,22 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 		}
 	};
 
+	/** Replaces a file with a newer version; returns the route's error text, or null on success. */
+	const replaceFile = async (file: CourseFile, newPath: string): Promise<string | null> => {
+		try {
+			const res = await fetch(`/api/chats/${chatId}/course/replace`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ path: file.path, newPath }),
+			});
+			if (res.ok) return null;
+			const body = (await res.json().catch(() => null)) as { error?: string } | null;
+			return body?.error ?? "Could not replace the file. Try again.";
+		} catch {
+			return "Could not replace the file. Try again.";
+		}
+	};
+
 	const toggleOpen = () => {
 		const next = !open;
 		setOpen(next);
@@ -226,7 +282,9 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 										className="min-w-0 truncate text-left hover:underline">
 										{filePathLabel(file.path)}
 									</button>
-									{file.status === "failed" ? (
+									{file.changedOnDisk ? (
+										<ChangedChip file={file} onUpdate={(f) => replaceFile(f, f.path)} />
+									) : file.status === "failed" ? (
 										<FailedChip file={file} binding={binding} onRetry={retryFile} />
 									) : (
 										<span className="shrink-0 rounded bg-muted px-1 text-muted-foreground">
@@ -253,7 +311,7 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 			{hint && <div className="mt-1 text-muted-foreground">{hint}</div>}
 			<CourseFileDetailsDialog file={files.find((f) => f.path === detailsPath) ?? null}
 				material={data.material} nodes={data.nodes} lessonNodes={data.lessonNodes ?? []}
-				onClose={() => setDetailsPath(null)} onMove={(f, category) => void moveFile(f, category)} onRetry={retryFile} onRemove={removeFile} />
+				onClose={() => setDetailsPath(null)} onMove={(f, category) => void moveFile(f, category)} onRetry={retryFile} onRemove={removeFile} onReplace={replaceFile} />
 		</div>
 	);
 }

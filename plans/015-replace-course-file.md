@@ -104,8 +104,8 @@ Regelungssysteme lesson in the installed app: open the old script's details → 
 
 | Part | Status |
 |---|---|
-| 1 Contracts and comparison | |
-| 2 Server, fingerprints, reader | |
-| 3 Tutor note, tool, prompt | |
-| 4 UI and docs | |
+| 1 Contracts and comparison | green, build-review/20261124-131813-015-part-1 |
+| 2 Server, fingerprints, reader | green, build-review/20261124-133720-015-part-2 |
+| 3 Tutor note, tool, prompt | green, build-review/20261124-143312-015-part-3 |
+| 4 UI and docs | green, build-review/20261124-150500-015-part-4 |
 | Build and install | |

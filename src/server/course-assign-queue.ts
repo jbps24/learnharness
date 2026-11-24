@@ -9,6 +9,7 @@ import {
 import { registerJobAbort, unregisterJobAbort } from "../agent/subagents/aborts.ts";
 import type { CourseFileStatus, CourseMaterial } from "../core/contracts/course.ts";
 import type { ChatStore, JobStore } from "../core/ports.ts";
+import { readFileFingerprint, type CourseFingerprint } from "./course-fingerprint.ts";
 
 export type { CourseAssignWorker, CourseAssignWorkerInput, CourseAssignWorkerResult } from "../core/course-assign.ts";
 
@@ -36,13 +37,19 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 	const cancelled = new WeakSet<AbortController>();
 	let jobSeq = 0;
 
-	function setStatus(chatId: string, path: string, status: CourseFileStatus, error?: string): void {
+	function setStatus(chatId: string, path: string, status: CourseFileStatus, error?: string, fingerprint?: CourseFingerprint | null): void {
 		const material = deps.chatStore.getChat(chatId)?.courseMaterial;
 		if (!material) return;
 		const files = material.files.map((file) => {
 			if (file.path !== path) return file;
-			const { error: _error, ...rest } = file;
-			return { ...rest, status, ...(error !== undefined ? { error } : {}) };
+			const { error: _error, changedOnDisk: _changed, ...rest } = file;
+			return {
+				...rest,
+				...(fingerprint ? { fingerprint } : {}),
+				...(fingerprint === undefined && file.changedOnDisk ? { changedOnDisk: true } : {}),
+				status,
+				...(error !== undefined ? { error } : {}),
+			};
 		});
 		deps.chatStore.setCourseMaterial(chatId, { ...material, files });
 		deps.emit?.("course-material-changed", { chatId });
@@ -89,7 +96,12 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 			(existingMethods[m.nodeId] ??= []).push({ path: m.path, method: m.method });
 		}
 
-		setStatus(chatId, target.path, "assigning");
+		// Plan 015: the fingerprint is stored when the read starts and clears a changed-on-disk flag.
+		setStatus(chatId, target.path, "assigning", undefined, await readFileFingerprint(target.path));
+		const previousMethods: Record<string, { pages?: string; method: string }> = {};
+		for (const p of target.replace ? (file.update?.previous ?? []) : []) {
+			if (wanted.has(p.nodeId)) previousMethods[p.nodeId] = p.pages === undefined ? { method: p.method } : { pages: p.pages, method: p.method };
+		}
 		const job = deps.jobStore.createJob({
 			// A core kind keeps the dock's rendering; nothing runs it through the job runner.
 			kind: "pdf",
@@ -117,6 +129,7 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 				path: target.path,
 				targets,
 				existingMethods,
+				...(target.replace ? { previousMethods } : {}),
 				...(category ? { category } : {}),
 				...(file.category === "reference" && stored ? { referenceIndex: { from: stored.from, sections: stored.sections } } : {}),
 				abortSignal: controller.signal,
@@ -136,7 +149,7 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 						? { category: "exam", nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) }
 						: outcome.result.category === "reference"
 							? { ...outcome.result, nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) }
-							: { category: "material", nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) };
+							: { ...outcome.result, nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) };
 				const currentFile = current.files.find((f) => f.path === target.path);
 				if (
 					currentFile?.categoryBy === "learner" &&

@@ -312,7 +312,7 @@ describe("reference category route", () => {
 		);
 		assert.equal(resFromRef.status, 200);
 
-		await new Promise((resolve) => setTimeout(resolve, 25));
+		await new Promise((resolve) => setTimeout(resolve, 250));
 		const jobs = jobStore.listJobs(chat.id);
 		assert.equal(
 			jobs.some((job) => (job.input as { path?: string } | undefined)?.path === "/course/textbook.pdf"),

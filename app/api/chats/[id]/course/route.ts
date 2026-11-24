@@ -3,7 +3,8 @@
  *
  * GET   → { material, nodes, lessonNodes }: the session's course files,
  *         methods and conflicts (null until the first file is collected)
- *         plus the plan nodes' id/title pairs for naming the methods. For a
+ *         plus the plan nodes' id/title pairs for naming the methods. Plan 015:
+ *         first flags a file whose content changed on disk (changedOnDisk). For a
  *         practice session, lessonNodes names the nodes of the lessons its
  *         inherited proposition methods came from.
  * PATCH → { path, binding }: the sidebar tick. Changes only `binding`.
@@ -18,14 +19,16 @@
  *         malformed body, 404 for an unknown chat or path.
  */
 import { emit, fileCategory, removeCourseFile } from "@/src/core";
-import { assignAddedCourseFiles, cancelCourseFile, stores } from "@/src/server";
+import { assignAddedCourseFiles, assignReplacedCourseFile, cancelCourseFile, refreshCourseFileChanges, stores } from "@/src/server";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
 	const { id } = await ctx.params;
 	const record = stores.chatStore.getChat(id);
 	if (!record) return Response.json({ error: "Unknown chat" }, { status: 404 });
+	// Plan 015: a file whose content changed on disk under the same name is flagged.
+	const courseMaterial = await refreshCourseFileChanges(id);
 	const lessonNodes: Array<{ lessonId: string; id: string; title: string }> = [];
-	const propositionMethods = record.courseMaterial?.propositionMethods ?? [];
+	const propositionMethods = courseMaterial?.propositionMethods ?? [];
 	if (record.kind === "practice" && propositionMethods.length > 0) {
 		const nodeIdsByLesson = new Map<string, Set<string>>();
 		for (const method of propositionMethods) {
@@ -41,7 +44,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 		}
 	}
 	return Response.json({
-		material: record.courseMaterial ?? null,
+		material: courseMaterial ?? null,
 		nodes: (record.tree?.nodes ?? []).map((node) => ({ id: node.id, title: node.title })),
 		lessonNodes,
 	});
@@ -78,7 +81,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 			files: material.files.map((file) => (file.path === target.path ? { ...rest, status: "pending" as const } : file)),
 		});
 		emit("course-material-changed", { chatId: id });
-		assignAddedCourseFiles(id, [target.path]);
+		if (target.update && !target.update.nodes) assignReplacedCourseFile(id, target.path);
+		else assignAddedCourseFiles(id, [target.path]);
 		return Response.json({ ok: true });
 	}
 	if (hasCategory) {

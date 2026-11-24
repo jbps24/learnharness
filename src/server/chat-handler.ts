@@ -69,6 +69,9 @@ import { courseFilesUsed, mergeCourseFiles } from "../core/course-files.ts";
 import { assignmentTargets } from "../core/course-assign.ts";
 import { createCourseAssignWorker } from "../agent/subagents/course-assign.ts";
 import { createCourseAssignQueue } from "./course-assign-queue.ts";
+import { detectCourseFileChanges, mergeDetectedCourseFileChanges } from "./course-fingerprint.ts";
+export { detectCourseFileChanges };
+export { resolveSourcePath } from "../agent/tools/fs-shared.ts";
 import { settledTurnResponse } from "./turn-runs.ts";
 import { asAgentMessages, type LhMessage } from "../core/native-messages.ts";
 import { QUESTION_TOOLS } from "../core/pending.ts";
@@ -84,7 +87,7 @@ import {
 	type TurnInput,
 } from "../core/input-events.ts";
 import { steerDelivered } from "../core/contracts.ts";
-import type {CallUsage, PlanTree} from "../core/contracts.ts";
+import type { CallUsage, CourseMaterial, PlanTree } from "../core/contracts.ts";
 
 const NO_REPLY_TO_RETRY = "There is no reply to retry.";
 
@@ -160,9 +163,29 @@ export function assignAddedCourseFiles(chatId: string, added: readonly string[])
 	if (targets.length > 0) void courseAssignQueue.enqueue(chatId, targets);
 }
 
+/** Plan 015 part 2: read a replacement file against all plan nodes in replace mode. */
+export function assignReplacedCourseFile(chatId: string, path: string): void {
+	const tree = stores.chatStore.getChat(chatId)?.tree;
+	if (!tree || tree.nodes.length === 0) return;
+	void courseAssignQueue.enqueue(chatId, [{ path, nodeIds: tree.nodes.map((node) => node.id), replace: true }]);
+}
+
 /** Plan 014 part 1: cancel any queued or running assignment for a removed course file. */
 export function cancelCourseFile(chatId: string, path: string): void {
 	courseAssignQueue.cancel(chatId, path);
+}
+
+/** Plan 015: detect course files changed on disk and merge onto the latest stored material. */
+export async function refreshCourseFileChanges(chatId: string): Promise<CourseMaterial | undefined> {
+	const before = stores.chatStore.getChat(chatId)?.courseMaterial;
+	if (!before) return undefined;
+	const checked = await detectCourseFileChanges(before);
+	const fresh = stores.chatStore.getChat(chatId)?.courseMaterial;
+	if (!fresh) return undefined;
+	const merged = mergeDetectedCourseFileChanges(fresh, before, checked.material);
+	if (merged.material !== fresh) stores.chatStore.setCourseMaterial(chatId, merged.material);
+	if (merged.changed) emit("course-material-changed", { chatId });
+	return merged.material;
 }
 
 /** Plan 007 part 3, trigger 2/3: a plan_init saved a new tree. */
@@ -710,7 +733,9 @@ export async function handleChatInput(
 		appends = [...appends, ...practiceCourseNotesFor([...record.messages, ...appends], record.courseMaterial)];
 	}
 	if (record.kind !== "practice" && learnerInput) {
-		if (record.tree) appends = [...appends, ...courseNotesFor([...record.messages, ...appends], record.tree, record.courseMaterial)];
+		// Plan 015: a course file changed on disk is flagged before the teaching notes are built.
+		const courseMaterial = await refreshCourseFileChanges(chatId);
+		if (record.tree) appends = [...appends, ...courseNotesFor([...record.messages, ...appends], record.tree, courseMaterial)];
 		appends = [...appends, ...breakNotesFor([...record.messages, ...appends], record.sideChats, breakTimings(effective.breaks), effective.breaks.enabled, Date.now())];
 	}
 	const afterInput = [...record.messages, ...appends];

@@ -1,6 +1,7 @@
 import {
 	COURSE_METHOD_CAP,
 	EXAM_PATTERN_CAP,
+	NEW_SECTIONS_CAP,
 	fileCategory,
 	type CourseMaterial,
 	type ExamPattern,
@@ -9,6 +10,7 @@ import {
 	type ReferenceSection,
 } from "./contracts/course.ts";
 import type { PlanTree } from "./contracts/plan.ts";
+import { classifyUpdate } from "./course-replace.ts";
 
 export interface AssignmentTargetNode {
 	id: string;
@@ -28,6 +30,7 @@ export interface CourseAssignPromptInput {
 	targets: readonly AssignmentTargetNode[];
 	existingMethods?: Record<string, readonly ExistingNodeMethod[]>;
 	category?: "material" | "exam" | "reference";
+	previousMethods?: Record<string, { pages?: string; method: string }>;
 }
 
 export interface AssignmentNodeOutput {
@@ -35,6 +38,7 @@ export interface AssignmentNodeOutput {
 	pages: string;
 	method: string;
 	sameRouteAsExisting: boolean | null;
+	sameAsPreviousVersion?: boolean | null;
 }
 
 export interface ExamAssignmentNodeOutput {
@@ -51,7 +55,11 @@ export interface ReferencePointerNodeOutput {
 }
 
 export type AssignmentResult =
-	| { category: "material"; nodes: AssignmentNodeOutput[] }
+	| {
+			category: "material";
+			nodes: AssignmentNodeOutput[];
+			newSections?: Array<{ title: string; pages: string }>;
+	  }
 	| { category: "exam"; nodes: ExamAssignmentNodeOutput[] }
 	| {
 			category: "reference";
@@ -68,6 +76,7 @@ export interface CourseAssignWorkerInput {
 	path: string;
 	targets: AssignmentTargetNode[];
 	existingMethods: Record<string, ExistingNodeMethod[]>;
+	previousMethods?: Record<string, { pages?: string; method: string }>;
 	category?: "material" | "exam" | "reference";
 	referenceIndex?: { from: "outline" | "contents" | "headings"; sections: ReferenceSection[] };
 	abortSignal: AbortSignal;
@@ -82,6 +91,7 @@ export type ParseAssignmentResult =
 export interface AssignmentTarget {
 	path: string;
 	nodeIds: string[];
+	replace?: boolean;
 }
 
 export type AssignmentTargetsInput =
@@ -121,6 +131,9 @@ For material, return ONE JSON object and nothing else: {"category":"material","n
 
 For an **exam**, set "category":"exam" and, for every plan node one of its tasks exercises, write one entry per task: source (the task as the file names it, with the exam's label if it has one, e.g. "WS22 A3b"), pages, pattern (the task type; what is given; what is asked; the expected answer format such as a sketch, a value, a short justification; typical numbers or functions; the points), and, only when the file contains a solution, grading (which steps earn how many points and the expected final form). Write in the file's language. Never invent a solution the file does not contain. Return ONE JSON object and nothing else: {"category":"exam","nodes":[{"nodeId":string,"source":string,"pages":string,"pattern":string,"grading"?:string}]}. Each pattern and each grading at most ${EXAM_PATTERN_CAP.toLocaleString("en-US")} characters.`;
 
+/** Appended to the instructions when the file replaces an earlier version (plan 015, owner-confirmed). */
+export const COURSE_ASSIGN_REPLACE_INSTRUCTIONS = `This file replaces an earlier version of the same course file. For each node, the task shows the earlier version's method. For every node this file works through, also set "sameAsPreviousVersion": true when the route is the same (same steps, possibly other wording, notation or pages), false when it changed, null when the earlier version had no method for the node. Then list in "newSections" the sections of this file that teach substantive content and that no plan node covers, at most ${NEW_SECTIONS_CAP}, each as {"title":string,"pages":string}.`;
+
 export function buildAssignmentPrompt(input: CourseAssignPromptInput): string {
 	const lines = [`Course file: ${input.path}`, "", "Plan nodes to look for in this file:"];
 	for (const node of input.targets) {
@@ -132,6 +145,8 @@ export function buildAssignmentPrompt(input: CourseAssignPromptInput): string {
 		for (const item of existing) {
 			lines.push(`  existing method from ${item.path}: ${item.method}`);
 		}
+		const previous = input.previousMethods?.[node.id];
+		if (previous) lines.push(`  earlier version's method${previous.pages ? ` (${previous.pages})` : ""}: ${previous.method}`);
 	}
 	if (input.category) lines.push("", `This file is a ${input.category}; do not decide again.`);
 	lines.push("", "Read the file, then return the JSON object.");
@@ -144,7 +159,12 @@ function stripFence(text: string): string {
 	return fenced ? fenced[1]! : trimmed;
 }
 
-export function parseAssignment(text: string, targetIds: readonly string[]): ParseAssignmentResult {
+export function parseAssignment(
+	text: string,
+	targetIds: readonly string[],
+	options?: { replace?: boolean },
+): ParseAssignmentResult {
+	const replace = options?.replace === true;
 	let raw: unknown;
 	try {
 		raw = JSON.parse(stripFence(text));
@@ -228,17 +248,52 @@ export function parseAssignment(text: string, targetIds: readonly string[]): Par
 			problems.push(`${label}: sameRouteAsExisting must be true, false or null`);
 			valid = false;
 		}
+		const sameAsPrevious = item.sameAsPreviousVersion;
+		if (replace) {
+			if (typeof sameAsPrevious !== "boolean" && sameAsPrevious !== null) {
+				problems.push(`${label}: sameAsPreviousVersion must be true, false or null`);
+				valid = false;
+			}
+		} else if ("sameAsPreviousVersion" in item) {
+			problems.push(`${label}: sameAsPreviousVersion is only allowed when the file replaces an earlier version`);
+			valid = false;
+		}
 		if (valid) {
 			nodes.push({
 				nodeId,
 				pages: typeof item.pages === "string" ? item.pages : "",
 				method,
 				sameRouteAsExisting: same as boolean | null,
+				...(replace ? { sameAsPreviousVersion: sameAsPrevious as boolean | null } : {}),
 			});
 		}
 	}
+	const newSections: Array<{ title: string; pages: string }> = [];
+	const rawSections = (raw as { newSections?: unknown }).newSections;
+	if (category === "material" && rawSections !== undefined) {
+		if (!replace) {
+			problems.push("\"newSections\" is only allowed when the file replaces an earlier version");
+		} else if (!Array.isArray(rawSections)) {
+			problems.push("\"newSections\" must be an array");
+		} else {
+			if (rawSections.length > NEW_SECTIONS_CAP) {
+				problems.push(`"newSections" has ${rawSections.length} entries, over the ${NEW_SECTIONS_CAP} cap`);
+			}
+			for (const [index, section] of rawSections.entries()) {
+				const s = (typeof section === "object" && section !== null ? section : {}) as Record<string, unknown>;
+				const title = typeof s.title === "string" ? s.title.trim() : "";
+				const pages = typeof s.pages === "string" ? s.pages.trim() : "";
+				if (title === "" || pages === "") {
+					problems.push(`newSections[${index}]: title and pages must be non-empty strings`);
+				} else {
+					newSections.push({ title, pages });
+				}
+			}
+		}
+	}
 	if (problems.length > 0) return { ok: false, problems };
-	return { ok: true, value: category === "exam" ? { category, nodes: examNodes } : { category, nodes } };
+	if (category === "exam") return { ok: true, value: { category, nodes: examNodes } };
+	return { ok: true, value: replace ? { category, nodes, newSections } : { category, nodes } };
 }
 
 export function applyAssignment(
@@ -342,7 +397,28 @@ export function applyAssignment(
 		});
 	}
 
-	return finish({ methods, conflicts, ...(material.examPatterns ? { examPatterns } : {}), ...referenceCleanup });
+	const applied = finish({ methods, conflicts, ...(material.examPatterns ? { examPatterns } : {}), ...referenceCleanup });
+	const isReplaceResult = result.newSections !== undefined || result.nodes.some((n) => n.sameAsPreviousVersion !== undefined);
+	if (!current?.update || !isReplaceResult) return applied;
+	// Plan 015: a replacement file records how each plan node's route moved.
+	const update = current.update;
+	const sameAsPrevious: Record<string, boolean> = {};
+	for (const node of result.nodes) sameAsPrevious[node.nodeId] = node.sameAsPreviousVersion === true;
+	return {
+		...applied,
+		files: applied.files.map((file) =>
+			file.path === filePath
+				? {
+						...file,
+						update: {
+							...update,
+							nodes: classifyUpdate(update.previous, result.nodes, sameAsPrevious),
+							newSections: result.newSections ?? [],
+						},
+					}
+				: file,
+		),
+	};
 }
 
 export function assignmentTargets(input: AssignmentTargetsInput): AssignmentTargetsResult {
