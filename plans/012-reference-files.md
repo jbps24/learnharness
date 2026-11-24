@@ -117,4 +117,4 @@ Desktop app (`ELECTRON_RUN_AS_NODE` unset):
 | 3 Reader sorts, node pointers | green, build-review/20261124-092347-012-part-3; skip-reader re-map + flip cleanup fix build-review/20261124-102351-012-part-3 |
 | 4 Tutor note, scoped lookups, prompts | green, build-review/20261124-094547-012-part-4 |
 | 5 UI | green, build-review/20261124-101036-012-part-5 |
-| 6 Docs, build, install |  |
+| 6 Docs, build, install | green, build-review/20261124-103542-012-part-6 |
