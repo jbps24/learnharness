@@ -85,4 +85,4 @@ Form: full
 |---|---|
 | 1 Per-chat workspace and link store | green (full), build-review/20261125-124323-019-part-1; paths fixed to plan in build-review/20261125-134745-019-part-2 (--issue, owner's choice) |
 | 2 Resume, fresh replay, usage from steps | green (full), build-review/20261125-130139-019-part-2 + path fix build-review/20261125-134745-019-part-2; open: a failed/aborted resumed run keeps the link, so agy may see the new message twice next turn |
-| Build and install | not started |
+| Build and install | installed 2026-11-25 13:56 (with 017–019) |
