@@ -122,6 +122,10 @@ Vocabulary is in [`CONTEXT.md`](../CONTEXT.md); the build plan is [`plans/002-le
 7. **Learning minutes.** Teaching chats show the learning clock in whole minutes (`learningMinutes`; 0 after a reset) beside the stats bar, recomputed every 15 s and on transcript changes, whether or not breaks are enabled. The tool context's `breaks` and `now` are required; there is no fallback.
 8. **Cut preparation.** A break taken at a unit end calls `prepareUnitCutDuringBreak` (skipped while a unit cut is already running for the chat); see step 2 of [Units, the lesson record and unit cuts](#units-the-lesson-record-and-unit-cuts).
 
+### Narration guard and owed narration
+
+Plan 021. Some models write the learner-facing grading as hidden narration (a `narration` thinking block) and then pose a question with nothing delivered. The guard in [`narration-guard.ts`](../src/agent/narration-guard.ts) blocks such a question (at most `NARRATION_GUARD_MAX_BLOCKS` = 2 times per run); its rejection says the learner saw none of the text and quotes the hidden narration back. The debt rule lives in [`narration-debt.ts`](../src/core/narration-debt.ts) (`owedNarration`): a narration rejection makes that narration owed, and the `send_to_user` text delivered afterwards pays it only once it is at least as long as the narration. When the budget is spent and the debt is still open, the question goes through, and `projectView` puts a `data-owed-narration` part (`OwedNarrationData`: `text`, `label`) before that question part, once per owed text; [`chat.tsx`](../components/chat.tsx) renders it under the label. A chat without guard rejections, or with empty narration, projects unchanged.
+
 [Prompt composition](../src/agent/prompts/README.md) and [tool-content display recovery](tool-content-recovery.md) have separate references. Plugins can add bounded question/problem types without replacing builtins; see [Trusted local plugins](#trusted-local-plugins-api-v1).
 
 ## Background work

@@ -44,8 +44,10 @@ describe("narrationGuardApplies", () => {
 		});
 	}
 	it("pins the approved delivery and retry wording", () => {
-		assert.equal(SEND_TO_USER_DELIVERY_RULE, "## Delivering your prose\n\nDeliver learner-facing prose through `send_to_user`; ordinary response text may be converted into summarized thinking instead of reaching the learner. Send the complete explanation, example, or commentary before calling the accompanying question tool. Question-only turns do not require an extra message. A question whose response contains narration but no delivered prose may be rejected so you can deliver the missing explanation and retry.");
-		assert.equal(NARRATION_BLOCK_REASON, "This response contains narration but no delivered learner-facing prose. Write the explanation or commentary the learner needs through `send_to_user`, then retry this question. Deliver learner-facing content, not internal reasoning.");
+		const existingRule = "## Delivering your prose\n\nDeliver learner-facing prose through `send_to_user`; ordinary response text may be converted into summarized thinking instead of reaching the learner. Send the complete explanation, example, or commentary before calling the accompanying question tool. Question-only turns do not require an extra message. A question whose response contains narration but no delivered prose may be rejected so you can deliver the missing explanation and retry. ";
+		assert.ok(SEND_TO_USER_DELIVERY_RULE.startsWith(existingRule));
+		assert.equal(SEND_TO_USER_DELIVERY_RULE.slice(existingRule.length), "When the learner has answered a question, your first call is `send_to_user` with your grading of that answer: what was right, what was wrong, and why. Only then pose the next question.");
+		assert.equal(NARRATION_BLOCK_REASON, "The learner has not seen any of the text you wrote in this response. It was turned into hidden thinking. Send that content in full through `send_to_user`: the grading of the learner's answer, corrections, and a reply to anything the learner asked. Then pose the question again.");
 	});
 });
 

@@ -425,7 +425,14 @@ describe("narration guard native flow (offline)", () => {
 					assert.equal(rejection?.role, "toolResult");
 					if (rejection?.role !== "toolResult") assert.fail("missing retry error");
 					assert.equal(rejection.isError, true);
-					assert.deepEqual(rejection.content, [{ type: "text", text: NARRATION_BLOCK_REASON }]);
+					assert.equal(rejection.content.length, 1);
+					const block = rejection.content[0];
+					assert.equal(block?.type, "text");
+					if (block?.type !== "text") assert.fail("expected text rejection");
+					assert.equal(
+						block.text,
+						"The learner has not seen any of the text you wrote in this response. It was turned into hidden thinking. Your hidden text: «Synthetic narration summary, not a lesson.». Send that content in full through `send_to_user`: the grading of the learner's answer, corrections, and a reply to anything the learner asked. Then pose the question again.",
+					);
 					return fauxAssistantMessage([narration(), outputCall(lesson), guardQuestion("delivered-question")], { stopReason: "toolUse" });
 				},
 				fauxAssistantMessage("Must not continue past a successfully posed question."),
@@ -453,7 +460,7 @@ describe("narration guard native flow (offline)", () => {
 
 	for (const outputFirst of [true, false]) {
 		it(`requires successful preceding output in the same batch (${outputFirst ? "output first" : "question first"})`, async () => {
-			const output = outputCall("A synthetic lesson.");
+			const output = outputCall("A complete synthetic lesson: two pairs make four.");
 			const question = guardQuestion("ordered-question");
 			const { engine, faux } = scripted("anthropic", "claude-sonnet-5-5", [
 				fauxAssistantMessage([narration(), ...(outputFirst ? [output, question] : [question, output])], { stopReason: "toolUse" }),
@@ -471,7 +478,7 @@ describe("narration guard native flow (offline)", () => {
 	it("does not let a failed output call end the run behind a successful question", async () => {
 		const { engine, faux } = scripted("anthropic", "claude-sonnet-5-5", [
 			fauxAssistantMessage([narration(), outputCall(" \n "), guardQuestion("undelivered-question")], { stopReason: "toolUse" }),
-			fauxAssistantMessage([narration(), outputCall("A repaired lesson.", "repaired-output"), guardQuestion("repaired-question")], { stopReason: "toolUse" }),
+			fauxAssistantMessage([narration(), outputCall("A complete repaired synthetic lesson: two pairs make four.", "repaired-output"), guardQuestion("repaired-question")], { stopReason: "toolUse" }),
 		]);
 		const agent = createTeacherAgent(undefined, { engine });
 		await agent.prompt("Pose a synthetic check.");
@@ -480,14 +487,14 @@ describe("narration guard native flow (offline)", () => {
 			assert.ok(agent.state.messages.some((m) => m.role === "toolResult" && m.toolCallId === callId && m.isError));
 		}
 		const messages = agent.state.messages.map((m, i) => ({ ...m, id: `repair-${i}` })) as LhMessage[];
-		assert.deepEqual(prose(projectView(messages)), ["A repaired lesson."]);
+		assert.deepEqual(prose(projectView(messages)), ["A complete repaired synthetic lesson: two pairs make four."]);
 	});
 
 	it("does not borrow an earlier response's output to satisfy new narration", async () => {
 		const { engine, faux } = scripted("anthropic", "claude-sonnet-5-5", [
 			fauxAssistantMessage([outputCall("An earlier synthetic explanation.")], { stopReason: "toolUse" }),
 			fauxAssistantMessage([narration(), guardQuestion("new-narration")], { stopReason: "toolUse" }),
-			fauxAssistantMessage([guardQuestion("question-only-retry")], { stopReason: "toolUse" }),
+			fauxAssistantMessage([outputCall("A complete synthetic explanation: two pairs make four.", "retry-output"), guardQuestion("question-only-retry")], { stopReason: "toolUse" }),
 		]);
 		const agent = createTeacherAgent(undefined, { engine });
 		await agent.prompt("Continue synthetic teaching.");

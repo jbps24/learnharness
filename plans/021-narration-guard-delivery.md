@@ -92,6 +92,7 @@ Form: full
 
 ## Status per part
 
-- Part 1: not started
-- Part 2: not started
-- Part 3: not started
+- Part 1: green (light), build-review/20261125-165249-021-part-1; texts brought to the confirmed wording by issue rounds 20261125-175422 and 20261125-180812 (owner approved the two locked-test edits)
+- Part 2: green (full), build-review/20261125-170258-021-part-2; run boundary (learner message, learner answer, marker) and one-pass view added in round 20261125-180812
+- Part 3: green (full), build-review/20261125-172059-021-part-3; error results no longer end a run (round 20261125-182223)
+- Round 20261125-182223: review clean, final verify gate killed by the 300 s hang guard under load; verified by hand 2026-11-25: typecheck clean, lint 0 errors, tests 6821 / 0 fail / 2 skipped (164 s)

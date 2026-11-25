@@ -39,6 +39,13 @@ import { readPluginQuestionMessageAnnotation, readPluginQuestionCancellation, ty
 import { pluginProblemForCall, type PluginProblemSnapshot } from "./plugin-problems.ts";
 import { activeCompactionOf, type CompactionDetails } from "./compaction.ts";
 import { QUESTION_TOOLS } from "./pending.ts";
+import {
+	createNarrationDebtTracker,
+	isNarrationDebtCleared,
+	isNarrationRejection,
+	stepNarrationDebt,
+	type NarrationDebtState,
+} from "./narration-debt.ts";
 import { breakState, breakTimings } from "./breaks.ts";
 import { BREAK_DEFAULTS } from "./settings.ts";
 import type { SubagentArtifactData, SubagentResultMeta } from "./contracts/jobs.ts";
@@ -68,6 +75,18 @@ export interface LhViewPart extends Record<string, unknown> {
 	/** Native result retained for public plugin renderers and readable fallbacks. */
 	result?: Pick<ToolResultMessage, "content" | "details" | "isError">;
 	data?: unknown;
+}
+
+/** View part type for hidden narration recovered as a fallback above a question. */
+export const OWED_NARRATION_PART_TYPE = "data-owed-narration" as const;
+
+/** Marker label shown over recovered narration. */
+const OWED_NARRATION_LABEL = "Tutor's notes (not sent as a message)";
+
+/** Payload of an owed-narration fallback part in `projectView`. */
+export interface OwedNarrationData {
+	text: string;
+	label: string;
 }
 
 /** A view message: user (bubble) or assistant (one continuous run). */
@@ -155,14 +174,42 @@ export function latestPlanUnits(messages: readonly LhMessage[]): PlanUnit[] | un
  *  view messages. Pure: the same input always projects to the same list. */
 export function projectView(messages: readonly LhMessage[], live?: LiveTurnState): LhViewMessage[] {
 	const out: LhViewMessage[] = [];
+	const debtTracker = createNarrationDebtTracker();
+	let lastOwedShown: string | undefined;
 	// Output calls become text rather than tool parts, so read settled
 	// failures up front: a failed call must retain the normal error path.
 	const outputErrors = new Map<string, ToolResultMessage>();
+	const erroredCalls = new Set<unknown>();
+	const deliveredCalls = new Set<unknown>();
+	const narrationRejectedCalls = new Set<unknown>();
+	const openCalls = new Map<string, unknown>();
 	for (const message of messages) {
-		if (message.role === "toolResult" && message.toolName === SEND_TO_USER_TOOL && message.isError) {
-			outputErrors.set(message.toolCallId, message);
+		if (message.role === "assistant") {
+			for (const block of message.content) {
+				if (block.type === "toolCall") openCalls.set(block.id, block);
+			}
+		} else if (message.role === "toolResult") {
+			if (message.toolName === SEND_TO_USER_TOOL && message.isError) {
+				outputErrors.set(message.toolCallId, message);
+			}
+			const call = openCalls.get(message.toolCallId);
+			if (call) {
+				openCalls.delete(message.toolCallId);
+				if (message.isError) {
+					erroredCalls.add(call);
+					const text = message.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+					if (isNarrationRejection(text)) narrationRejectedCalls.add(call);
+				} else if (message.toolName === SEND_TO_USER_TOOL) {
+					deliveredCalls.add(call);
+				}
+			}
 		}
 	}
+	const isActiveQuestionCall = (block: AssistantMessage["content"][number]): boolean =>
+		block.type === "toolCall" &&
+		(QUESTION_TOOLS as readonly string[]).includes(block.name) &&
+		!erroredCalls.has(block) &&
+		live?.executions.get(block.id)?.isError !== true;
 
 	const lastAssistant = (): LhViewMessage | undefined => {
 		const last = out[out.length - 1];
@@ -249,6 +296,9 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 			});
 		}
 
+		stepNarrationDebt(debtTracker, m);
+		if (debtTracker.owed === undefined) lastOwedShown = undefined;
+
 		if (role === "user") {
 			const content = m.content as string | Array<{ type: string; text?: string }>;
 			const parts = typeof content === "string" ? [textPart(content)] : content.flatMap((block): LhViewPart[] => {
@@ -300,6 +350,11 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 			// back to a spinner mid-transcript; live cards belong at the
 			// bottom, and this gate is what puts them there by construction).
 			const streamingMessage = live?.streamingIds.has(m.id) === true;
+			// Plan 021 part 3: the guard's budget is spent and the question went
+			// through with hidden narration still owed: show it above the question.
+			let debt: NarrationDebtState = assistant.content.some(isActiveQuestionCall)
+				? { owed: debtTracker.owed, delivered: debtTracker.delivered }
+				: { owed: undefined, delivered: "" };
 			for (const [contentIndex, block] of assistant.content.entries()) {
 				if (block.type === "text") {
 					rest.push({ type: "text", id: `${m.id}-t${textN++}`, text: block.text, state: "done" });
@@ -308,6 +363,27 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 				} else if (block.type === "toolCall") {
 					// The break offer renders from its result (the divider), never as a tool card.
 					if (block.name === "suggest_break") continue;
+					if (
+						debt.owed !== undefined &&
+						block.name === SEND_TO_USER_TOOL &&
+						assistant.stopReason !== "error" &&
+						assistant.stopReason !== "aborted" &&
+						!erroredCalls.has(block) &&
+						(deliveredCalls.has(block) || live?.executions.get(block.id)?.isError === false)
+					) {
+						debt.delivered += sendToUserText(block) ?? "";
+						if (isNarrationDebtCleared(debt.owed, debt.delivered)) {
+							debt = { owed: undefined, delivered: "" };
+						}
+					} else if (debt.owed !== undefined && narrationRejectedCalls.has(block)) {
+						debt.delivered = "";
+					}
+					if (debt.owed !== undefined && debt.owed !== lastOwedShown && isActiveQuestionCall(block)) {
+						lastOwedShown = debt.owed;
+						const data: OwedNarrationData = { text: debt.owed, label: OWED_NARRATION_LABEL };
+						rest.push({ type: OWED_NARRATION_PART_TYPE, id: `${m.id}-owed`, data });
+						debt = { owed: undefined, delivered: "" };
+					}
 					const annotation = readPluginQuestionMessageAnnotation(m, contentIndex);
 					if (annotation.status !== "absent") {
 						// Source position, not reasoning-partitioned/grouped view index.

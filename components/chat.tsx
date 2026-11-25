@@ -77,7 +77,7 @@ import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext, type SessionImage } from "@/components/session-overlay";
 import { AbortTurnDialog, type AbortMode } from "@/components/abort-turn-dialog";
 import { ArrowRightIcon, DumbbellIcon, MessageCircleQuestionIcon, RotateCcwIcon, WaypointsIcon } from "lucide-react";
-import type { PlanBlockData } from "@/src/core";
+import type { PlanBlockData, OwedNarrationData } from "@/src/core";
 import { QuestionDock } from "@/components/question-dock";
 import { PluginQuestionDock } from "./plugin-question-dock";
 import { PluginQuestionPart } from "./plugin-question-part";
@@ -2128,6 +2128,15 @@ export function Chat({
 														return (
 															<div key={part.id || pi} id={anchor} data-find-part={part.id} data-source-message-id={sourceId ?? undefined} className="lh-source-passage">
 																<MessageResponse>{part.text}</MessageResponse>
+															</div>
+														);
+													}
+													case "data-owed-narration": {
+														const owed = part.data as OwedNarrationData;
+														return (
+															<div key={part.id || pi} data-testid="owed-narration" className="lh-source-passage">
+																<div className="mb-1 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground">{owed.label}</div>
+																<MessageResponse>{owed.text}</MessageResponse>
 															</div>
 														);
 													}
