@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,7 +35,8 @@ import { ContextWindowProbe } from "./context-window.ts";
 import { addLiveProcess, getLiveProcess, removeLiveProcess, type LiveProcess } from "./live-processes.ts";
 import { configurationForReuse, conversationForReuse } from "./reuse-context.ts";
 import { BRIDGE_SERVER_NAME, createToolBridge, toolNameFromMcp, type PendingToolCall, type ToolBridge } from "./tool-bridge.ts";
-import { toClaudeInput, toStreamJsonLine } from "./transcript.ts";
+import { salvageToolCall, stripReplayLines } from "./text-tool-calls.ts";
+import { toClaudeCliInput, toStreamJsonLine } from "./transcript.ts";
 
 type RunClaudeOptions = { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal };
 
@@ -261,6 +263,8 @@ class ClaudeTurn {
 
 	admit(calls: ToolCall[]): void {
 		this.start();
+		// A turn with a real call gets no salvaged second one; its replay-format lines are only cut.
+		this.stripText();
 		for (const call of calls) {
 			const contentIndex = this.output.content.length;
 			this.output.content.push(call);
@@ -386,9 +390,42 @@ class ClaudeTurn {
 			return;
 		}
 
+		const cut = this.stripText();
+		const salvaged = stopReason === "stop" && this.salvage(cut);
+
 		this.finished = true;
-		this.stream.push({ type: "done", reason: stopReason, message: this.output });
+		this.stream.push({ type: "done", reason: salvaged ? "toolUse" : stopReason, message: this.output });
 		this.stream.end();
+	}
+
+	/** Cuts replay-format lines the model wrote as text; returns what was cut. */
+	private stripText(): string {
+		const cuts: string[] = [];
+		this.output.content = this.output.content.flatMap<AssistantMessage["content"][number]>((block) => {
+			if (block.type !== "text") return [block];
+
+			const { kept, cut } = stripReplayLines(block.text);
+			if (cut) cuts.push(cut);
+			if (!cut) return [block];
+
+			block.text = kept;
+			return kept ? [block] : [];
+		});
+		return cuts.join("\n\n");
+	}
+
+	/** A call written as text on a plain stop becomes a real call; the caller runs it like any other. */
+	private salvage(cut: string): boolean {
+		const call = salvageToolCall(cut, this.harnessToolNames);
+		if (!call) return false;
+
+		const toolCall: ToolCall = { type: "toolCall", id: `text-call-${randomUUID()}`, name: call.name, arguments: call.arguments };
+		const contentIndex = this.output.content.length;
+		this.output.content.push(toolCall);
+		this.stream.push({ type: "toolcall_start", contentIndex, partial: this.output });
+		this.stream.push({ type: "toolcall_end", contentIndex, toolCall, partial: this.output });
+		this.output.stopReason = "toolUse";
+		return true;
 	}
 }
 
@@ -693,7 +730,7 @@ async function startProcess(
 	env: NodeJS.ProcessEnv,
 ): Promise<void> {
 	if (options?.signal?.aborted) { turn.fail(ABORT_MESSAGE, "aborted"); return; }
-	const input = toClaudeInput(context.messages);
+	const input = toClaudeCliInput(context.messages);
 	let cliProcess: ClaudeProcess | undefined;
 	const bridge = await createToolBridge(input.tools, {
 		onCall: () => cliProcess?.flushAdmissions(),
