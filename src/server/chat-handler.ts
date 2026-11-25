@@ -33,7 +33,7 @@ import { fileAccessPolicy } from "./file-access.ts";
 import { collectToolCallIds } from "./pi/call-ids.ts";
 import { providerEventNote } from "../agent/provider-events.ts";
 import { effectiveSettings, stores } from "./stores.ts";
-import { getPluginAgentContributions, getPluginHost } from "./plugins.ts";
+import { getPluginAgentContributions, getPluginHost, readyPluginAgentContributions } from "./plugins.ts";
 import { preparePluginQuestionSubmission, reconcilePluginQuestionCompatibility, type QuestionTypeResolver } from "./plugin-questions.ts";
 import { searchAvailable, searchProvider } from "./search.ts";
 import { prepareSubmissionImages, prepareSubmissionImageChannels, prepareProblemSubmissionImageChannels, submissionImagePolicyKey } from "./submission-images.ts";
@@ -89,7 +89,7 @@ import {
 	type TurnInput,
 } from "../core/input-events.ts";
 import { steerDelivered } from "../core/contracts.ts";
-import type { CallUsage, CourseMaterial, PlanTree } from "../core/contracts.ts";
+import type { CallUsage, ChatRecord, CourseMaterial, PlanTree } from "../core/contracts.ts";
 
 const NO_REPLY_TO_RETRY = "There is no reply to retry.";
 
@@ -310,8 +310,110 @@ setJobRespawn((jobId) => void jobRunner.runJob(jobId));
 // tools read it fresh per call (allowed folders + the app's private paths).
 setFileAccessPolicy(fileAccessPolicy);
 
+function buildConversationAgent(
+	chatId: string,
+	kind: ChatRecord["kind"],
+	effective: ReturnType<typeof effectiveSettings>,
+	teaching: boolean,
+	agentOpts: AgentBuildOptions,
+): TeachingAgent {
+	return kind === "practice"
+		? createPracticeAgent(
+				{
+					chatId,
+					chatStore: stores.chatStore,
+					// TARGET VALIDATION (owner round 9): the practice tools read the
+					// WHOLE graph fresh per pose — targets validate against every
+					// proposition, not just the session's picks (pickless sessions
+					// and future graph-tools poses stay valid).
+					graphNodes: () => stores.graphStore.readNodes(),
+					// THE RARELY-NEEDED SET (owner round 10): research + pdf jobs
+					// (same runner/gating as the teacher's — research honestly
+					// absent when no engine is live) and the map readers behind
+					// the SAME settings gate as the prober's.
+					jobs: {
+						chatId,
+						jobStore: stores.jobStore,
+						spawn: (job, input) => void jobRunner.runJob(job.id, input),
+						searchAvailable,
+					},
+					...(graphToolsEnabled(effective) ? { graph: { chatStore: stores.chatStore, graphStore: stores.graphStore } } : {}),
+				},
+				agentOpts,
+			)
+		: teaching
+		? createTeacherAgent(
+				{
+					chatId,
+					chatStore: stores.chatStore,
+					jobStore: stores.jobStore,
+					spawn: (job, input) => void jobRunner.runJob(job.id, input),
+					// The registry drop's signal (2026-09-20): no live engine
+					// = no research tool in the teacher's registry.
+					searchAvailable,
+					breaks: () => effectiveSettings().breaks,
+					now: Date.now,
+					onPlanSaved: (previous, next) => assignAfterPlanInit(chatId, previous, next),
+				},
+				agentOpts,
+			)
+		: createProberAgent(
+				{
+					chatId,
+					chatStore: stores.chatStore,
+					deliver: (steer) => void deliverJobResult(steer),
+					// Fix wave (2026-09-20): the prober carries research + pdf
+					// dispatch (owner ruling — phase-omnipresent), so its ctx
+					// needs the same job wiring as the teacher's.
+					jobStore: stores.jobStore,
+					spawn: (job, input) => void jobRunner.runJob(job.id, input),
+					searchAvailable,
+					// The map reader (wave 7): the prober reads the learner's
+					// knowledge graph through tools when the gate opens —
+					// graph master switch AND the agent.graphTools toggle.
+					...(graphToolsEnabled(effective) ? { graphStore: stores.graphStore } : {}),
+				},
+				agentOpts,
+			);
+}
+
+/** Build the system prompt and optional agy resume descriptor for a compaction gate. */
+function antigravityGateShape(
+	chatId: string,
+	record: Pick<ChatRecord, "kind" | "messages">,
+	effective: ReturnType<typeof effectiveSettings>,
+	engine: PiEngine,
+	canComputeTools: boolean,
+	pluginContributions: AgentBuildOptions["pluginContributions"],
+) {
+	const teaching = hasProbeDone(record.messages);
+	if (engine.model.provider === ANTIGRAVITY_PROVIDER && canComputeTools) {
+		const gateAgent = buildConversationAgent(chatId, record.kind, effective, teaching, {
+			pluginContributions,
+			engine,
+			toolToggles: effective.agent.tools,
+			chatId,
+			promptSwitches: effective.agent.prompts,
+		});
+		return {
+			instructions: gateAgent.state.systemPrompt,
+			resume: { chatId, model: engine.model.id, tools: gateAgent.state.tools },
+		};
+	}
+	return {
+		instructions: composeInstructions(
+			record.kind === "practice" ? "practice" : teaching ? "teacher" : "prober",
+			effective.agent.prompts,
+		),
+		resume: { chatId, model: engine.model.id },
+	};
+}
+
 /** Build CompactionDeps for background maintenance (settle kick or break cut prep), or null when unavailable. */
-export function backgroundCompactionDeps(chatId: string): CompactionDeps | null {
+export function backgroundCompactionDeps(
+	chatId: string,
+	options?: { pluginContributions?: AgentBuildOptions["pluginContributions"]; unknownTools?: boolean },
+): CompactionDeps | null {
 	const fresh = effectiveSettings();
 	const spec = resolveConversationSpec(stores.chatStore.getChat(chatId)?.settings, fresh.models.strong);
 	if (!spec || !connectionBackgroundAllowed(spec.provider)) return null;
@@ -320,7 +422,17 @@ export function backgroundCompactionDeps(chatId: string): CompactionDeps | null 
 	const kickModelId = `${kickEngine.model.provider}:${kickEngine.model.id}`;
 	const freshRecord = stores.chatStore.getChat(chatId);
 	if (!freshRecord) return null;
-	const kickInstructions = composeInstructions(freshRecord.kind === "practice" ? "practice" : "teacher");
+	const hasExplicitContributions = options !== undefined && "pluginContributions" in options;
+	const readyContributions = hasExplicitContributions ? options.pluginContributions : readyPluginAgentContributions();
+	const canComputeTools = !options?.unknownTools && (hasExplicitContributions || readyContributions !== undefined);
+	const { instructions: kickInstructions, resume } = antigravityGateShape(
+		chatId,
+		freshRecord,
+		fresh,
+		kickEngine,
+		canComputeTools,
+		readyContributions,
+	);
 	return {
 		chatStore: stores.chatStore,
 		engine: kickEngine,
@@ -333,8 +445,8 @@ export function backgroundCompactionDeps(chatId: string): CompactionDeps | null 
 			catalogContextLimits().get(kickModelId),
 		),
 		systemPromptTokens: Math.ceil(kickInstructions.length / 4),
-		requestOverLimit: antigravityRequestTrigger(kickEngine.model.provider, kickInstructions),
-		keptTail: antigravityKeptTail(kickEngine.model.provider, kickInstructions),
+		requestOverLimit: antigravityRequestTrigger(kickEngine.model.provider, kickInstructions, resume),
+		keptTail: antigravityKeptTail(kickEngine.model.provider, kickInstructions, resume),
 		summaryRequestFits: antigravitySummaryFit(kickEngine.model.provider),
 	};
 }
@@ -524,10 +636,25 @@ export async function handleChatInput(
 		if (err instanceof ChatInputError) return Response.json({ error: err.message }, { status: 400 });
 		throw err;
 	}
+	let pluginContributions: AgentBuildOptions["pluginContributions"];
+	if (!buildAgent) {
+		try { pluginContributions = await getPluginAgentContributions(); }
+		catch (error) {
+			// Plugin startup failures must not make the native lesson unusable.
+			console.error("[plugins] Agent contributions unavailable:", error);
+		}
+	}
 	const modelIdForCompaction = `${conversationEngine.model.provider}:${conversationEngine.model.id}`;
 	const contextWindow = catalogContextLimits().get(modelIdForCompaction);
 	const thresholdTokens = effectiveThresholdTokens(effective.compaction?.thresholdTokens, contextWindow);
-	const instructions = composeInstructions(record.kind === "practice" ? "practice" : "teacher");
+	const { instructions, resume: antigravityResume } = antigravityGateShape(
+		chatId,
+		record,
+		effective,
+		conversationEngine,
+		!buildAgent && input.type !== "retry-reply",
+		pluginContributions,
+	);
 	const systemPromptTokens = Math.ceil(instructions.length / 4);
 	const estimateModel = effective.compaction.includeReasoning ? conversationEngine.model : undefined;
 	const fitsSideContext = (messages: readonly LhMessage[]) => {
@@ -557,8 +684,8 @@ export async function handleChatInput(
 			includeReasoning: effective.compaction.includeReasoning,
 			thresholdTokens,
 			systemPromptTokens,
-			requestOverLimit: antigravityRequestTrigger(conversationEngine.model.provider, instructions),
-			keptTail: antigravityKeptTail(conversationEngine.model.provider, instructions),
+			requestOverLimit: antigravityRequestTrigger(conversationEngine.model.provider, instructions, antigravityResume),
+			keptTail: antigravityKeptTail(conversationEngine.model.provider, instructions, antigravityResume),
 			summaryRequestFits: antigravitySummaryFit(compactionEngine.model.provider),
 			projectMessages: (current) => {
 				try {
@@ -596,14 +723,6 @@ export async function handleChatInput(
 		},
 		chatId,
 	);
-	let pluginContributions: AgentBuildOptions["pluginContributions"];
-	if (!buildAgent) {
-		try { pluginContributions = await getPluginAgentContributions(); }
-		catch (error) {
-			// Plugin startup failures must not make the native lesson unusable.
-			console.error("[plugins] Agent contributions unavailable:", error);
-		}
-	}
 	const compactedRecord = stores.chatStore.getChat(chatId);
 	if (!compactedRecord) return Response.json({ error: "Unknown chat" }, { status: 404 });
 	record = compactedRecord;
@@ -934,64 +1053,7 @@ export async function handleChatInput(
 	// uniform across kinds).
 	const constructed: TeachingAgent = buildAgent
 		? buildAgent({ ...agentOpts, teaching })
-		: record.kind === "practice"
-			? createPracticeAgent(
-					{
-						chatId,
-						chatStore: stores.chatStore,
-						// TARGET VALIDATION (owner round 9): the practice tools read the
-						// WHOLE graph fresh per pose — targets validate against every
-						// proposition, not just the session's picks (pickless sessions
-						// and future graph-tools poses stay valid).
-						graphNodes: () => stores.graphStore.readNodes(),
-						// THE RARELY-NEEDED SET (owner round 10): research + pdf jobs
-						// (same runner/gating as the teacher's — research honestly
-						// absent when no engine is live) and the map readers behind
-						// the SAME settings gate as the prober's.
-						jobs: {
-							chatId,
-							jobStore: stores.jobStore,
-							spawn: (job, input) => void jobRunner.runJob(job.id, input),
-							searchAvailable,
-						},
-						...(graphToolsEnabled(effective) ? { graph: { chatStore: stores.chatStore, graphStore: stores.graphStore } } : {}),
-					},
-					agentOpts,
-				)
-			: teaching
-			? createTeacherAgent(
-					{
-						chatId,
-						chatStore: stores.chatStore,
-						jobStore: stores.jobStore,
-						spawn: (job, input) => void jobRunner.runJob(job.id, input),
-						// The registry drop's signal (2026-09-20): no live engine
-						// = no research tool in the teacher's registry.
-						searchAvailable,
-						breaks: () => effectiveSettings().breaks,
-						now: Date.now,
-						onPlanSaved: (previous, next) => assignAfterPlanInit(chatId, previous, next),
-					},
-					agentOpts,
-				)
-			: createProberAgent(
-					{
-						chatId,
-						chatStore: stores.chatStore,
-						deliver: (steer) => void deliverJobResult(steer),
-						// Fix wave (2026-09-20): the prober carries research + pdf
-						// dispatch (owner ruling — phase-omnipresent), so its ctx
-						// needs the same job wiring as the teacher's.
-						jobStore: stores.jobStore,
-						spawn: (job, input) => void jobRunner.runJob(job.id, input),
-						searchAvailable,
-						// The map reader (wave 7): the prober reads the learner's
-						// knowledge graph through tools when the gate opens —
-						// graph master switch AND the agent.graphTools toggle.
-						...(graphToolsEnabled(effective) ? { graphStore: stores.graphStore } : {}),
-					},
-					agentOpts,
-				);
+		: buildConversationAgent(chatId, record.kind, effective, teaching, agentOpts);
 
 	// A test-injected agent gets no usage collector (tests assert the
 	// transcript, not the money channel); when it's ours, usage flows through
@@ -1129,7 +1191,7 @@ export async function handleChatInput(
 				// tests (the extraction precedent — scripted chats are
 				// fixtures; the service itself is pinned directly).
 				if (process.env.NODE_ENV !== "test" && !pendingSideBudgetError && (!requestCycle || requestCycle.dispatched))
-					kickCompaction(() => backgroundCompactionDeps(chatId), chatId);
+					kickCompaction(() => backgroundCompactionDeps(chatId, { pluginContributions, unknownTools: !!buildAgent }), chatId);
 			},
 		});
 		// The turn is now a live background object: register it so any view

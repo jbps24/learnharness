@@ -50,6 +50,7 @@ import { compactAnswerForModel, type QuestionAnswerData } from "./question-core.
 import { isContextCut, projectionHeads } from "./compaction.ts";
 import { parseQuestionInput } from "./tool-parts.ts";
 import { expandCitationsForModel } from "./citations.ts";
+import { condenseLessonRecordPlan } from "./lesson-record.ts";
 import { readPluginQuestionMessageAnnotation, readPluginQuestionAnswer, readPluginQuestionCancellation, samePluginQuestionOccurrence, type PluginQuestionAnnotationRead, type PluginQuestionOccurrence, type PluginQuestionOccurrenceMap, type PluginQuestionSnapshot } from "./plugin-questions.ts";
 
 /** The hard-invariant wording for an aborted turn's unanswered calls —
@@ -83,6 +84,7 @@ export interface LhMarkerMessage {
 		| "practice-next"
 		| "problem-dismissed"
 		| "compaction"
+		| "compaction-skipped"
 		| "side-question"
 		| "side-question-told"
 		| "lesson-record"
@@ -409,6 +411,23 @@ export function newUnitsNoteMessage(): LhMarkerMessage {
 		customType: "units-note",
 		content: UNITS_NOTE_TEXT,
 		display: false,
+		details: null,
+		timestamp: Date.now(),
+	};
+}
+
+/** Plan 022 part 3: shown when compacting would free less than one turn's room. */
+export const COMPACTION_SKIPPED_TEXT =
+	"The conversation is close to this model's size limit, and compacting now would not free enough room. You can keep going; if the limit is reached, switch to a model with a larger context.";
+
+/** The no-gain notice: UI-only, toLlmMessages filters it. */
+export function newCompactionSkippedMessage(): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "compaction-skipped",
+		content: COMPACTION_SKIPPED_TEXT,
+		display: true,
 		details: null,
 		timestamp: Date.now(),
 	};
@@ -817,7 +836,7 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 	const { start, heads } = projectionHeads(lhMessages);
 	const headMessages: Message[] = heads.map((marker) => ({
 		role: "user",
-		content: [{ type: "text", text: marker.content }],
+		content: [{ type: "text", text: marker.customType === "lesson-record" ? condenseLessonRecordPlan(marker.content) : marker.content }],
 		timestamp: marker.timestamp,
 	}));
 	const head = headMessages.length ? headMessages : null;
@@ -851,7 +870,7 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 			// stored position. Without a resolved head, preserve the existing
 			// full-history fallback, including the summary text.
 			if (marker.customType === "compaction" && head !== null) continue;
-			if (marker.customType === "lesson-record") continue;
+			if (marker.customType === "lesson-record" || marker.customType === "compaction-skipped") continue;
 				if (marker.customType === "break-taken" || marker.customType === "break-skipped") continue;
 			const problemSubmission = marker.customType === "plugin-problem-submission" ? readPluginProblemSubmission(marker.details) : null;
 			out.push({
@@ -1138,7 +1157,7 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
 		if (["practice-thinking", "plugin-problem-submission", "practice-next", "break-taken", "break-skipped", "break-ended"].includes(message.customType)) return "learner";
-		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "lesson-record", "units-note", "break-note", "course-files", "course-method", "course-update", "exam-pattern", "reference"].includes(message.customType) ? "neutral" : "unrecognizable";
+		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "compaction-skipped", "side-question", "side-question-told", "lesson-record", "units-note", "break-note", "course-files", "course-method", "course-update", "exam-pattern", "reference"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {
 		const pluginAnswer = readPluginQuestionAnswer(message.details);

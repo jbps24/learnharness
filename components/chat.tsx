@@ -2009,6 +2009,12 @@ export function Chat({
 											}
 											case "data-practice-thinking":
 												return <div key={pi} data-find-part={part.id} className="contents"><ThinkingCard data={part.data as PracticeThinkingData} /></div>;
+											case "data-compaction-skipped":
+												return (
+													<div key={pi} data-testid="compaction-skipped-line" className="my-4 text-center font-ui text-xs text-muted-foreground">
+														{(part.data as { content: string }).content}
+													</div>
+												);
 											case "data-practice-next":
 												// The learner's move-on signal (owner round 16): a compact
 												// centered mono-caps line — chrome, the dismissal register.

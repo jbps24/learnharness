@@ -678,6 +678,14 @@ function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[]): void {
 		case "units-note":
 			// Wire-only session note (plan 001 part 6): renders nothing.
 			return;
+		case "compaction-skipped":
+			// Plan 022 part 3: a one-line chat notice, never sent to the model.
+			out.push({
+				id: marker.id,
+				role: "user",
+				parts: [{ type: "data-compaction-skipped", id: `cs_${marker.id}`, data: { content: marker.content } }],
+			});
+			return;
 		case "lesson-record":
 			// Never rendered (plan 001 part 8): the unit divider is emitted by
 			// the fold at the kept boundary, the record itself stays model-facing.

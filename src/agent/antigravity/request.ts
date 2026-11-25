@@ -82,6 +82,10 @@ export const AGY_TOOL_SCHEMA_RESERVE_BYTES = 24 * 1024;
  * one; real agy summaries weighed 11–15 KB in Nov 2026. */
 export const AGY_MIN_SUMMARY_BYTES = 16 * 1024;
 
+/** A compaction that leaves less than this under the trigger gains nothing: the
+ * next turn would compact again, so the compaction is skipped. */
+export const AGY_MIN_TURN_ROOM_BYTES = 16 * 1024;
+
 const PLACEHOLDER_DIR = join(tmpdir(), "learnharness-agy-XXXXXX");
 
 /** How many bytes of recent history an agy compaction keeps verbatim: half of
@@ -90,9 +94,14 @@ const PLACEHOLDER_DIR = join(tmpdir(), "learnharness-agy-XXXXXX");
  * half is room for the turns after it. A token-sized tail (20k tokens ≈ 84 KB)
  * left the request over the trigger right after compacting, so every turn
  * compacted again. */
-export function agyKeepRecentBytes(instructions: string, priorSummaryBytes: number): number {
-	const fixed = antigravityRequestBytes([], instructions) + AGY_TOOL_SCHEMA_RESERVE_BYTES + Math.max(priorSummaryBytes, AGY_MIN_SUMMARY_BYTES);
-	return Math.max(0, Math.floor((AGY_COMPACT_AT_BYTES - fixed) / 2));
+export function agyKeepRecentBytes(instructions: string, priorSummaryBytes: number, extraFixedBytes = 0): number {
+	return Math.max(0, Math.floor((AGY_COMPACT_AT_BYTES - agyFixedBytes(instructions, priorSummaryBytes, extraFixedBytes)) / 2));
+}
+
+/** What a compaction cannot remove: instructions, tool reserve, the expected
+ * summary, and `extraFixedBytes` (the lesson record and the notes it appends). */
+export function agyFixedBytes(instructions: string, priorSummaryBytes: number, extraFixedBytes = 0): number {
+	return antigravityRequestBytes([], instructions) + AGY_TOOL_SCHEMA_RESERVE_BYTES + Math.max(priorSummaryBytes, AGY_MIN_SUMMARY_BYTES) + extraFixedBytes;
 }
 
 const EMPTY_REQUEST_BYTES = antigravityRequestBytes([], "");

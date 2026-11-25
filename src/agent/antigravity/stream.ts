@@ -7,7 +7,7 @@ import { createAssistantMessageEventStream, type AssistantMessage, type Assistan
 import { externalCliEnv } from "../../core/auth-env.ts";
 import { toClaudeInput } from "../claude-code/transcript.ts";
 import { getAntigravityBinary } from "./binary.ts";
-import { deleteLink, fingerprint, isSafeChatId, readLink, workspaceFor, writeLink } from "./link.ts";
+import { agyResumableLink, deleteLink, fingerprint, isSafeChatId, workspaceFor, writeLink } from "./link.ts";
 import { ANTIGRAVITY_MODELS } from "./provider.ts";
 import { AGY_MAX_INPUT_BYTES, antigravityTooLargeMessage, buildAntigravityPrompt, buildAntigravityResumePrompt } from "./request.ts";
 
@@ -115,11 +115,9 @@ export function createAntigravityStream(run: RunAntigravity = (binary, args, opt
 				// Resume the chat's agy conversation only when it was built from exactly this
 				// model, system prompt, tools and message prefix. The message after the prefix
 				// is agy's own reply, so only what follows it is sent.
-				const link = chatId ? readLink(chatId) : null;
-				const sent = link?.messageCount ?? 0;
-				const resumeFrom = link && link.messageCount !== undefined && link.model === model.id
-					&& conversation[sent]?.role === "assistant" && sent + 1 < conversation.length
-					&& link.fingerprint === fingerprint(input.systemPrompt, input.tools, conversation.slice(0, sent)) ? link : null;
+				const stored = agyResumableLink(chatId, model.id, input.systemPrompt, input.tools, conversation);
+				const sent = stored?.messageCount ?? 0;
+				const resumeFrom = stored && sent + 1 < conversation.length ? stored : null;
 				const settingsFor = (images: Built["images"]) => ({ ...AGY_SESSION_SETTINGS, permissions: { ...AGY_SESSION_SETTINGS.permissions,
 					deny: [...AGY_SESSION_SETTINGS.permissions.deny, ...(images.length ? [] : ["read_file(*)"])],
 					allow: images.length ? [`read_file(${workdir}/)`] : [],

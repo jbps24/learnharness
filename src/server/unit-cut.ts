@@ -15,6 +15,7 @@ import {
 	type LhMarkerMessage,
 	type LhMessage,
 } from "../core/index.ts";
+import { courseNotesFor } from "../core/course-notes.ts";
 import { emit } from "../core/events.ts";
 import {
 	buildLessonRecordPrompt,
@@ -204,7 +205,10 @@ export async function runUnitCut(
 		const current = deps.chatStore.getChat(chatId);
 		if (!current) throw new Error(`Chat not found: ${chatId}`);
 		const end = messages.length;
-		deps.chatStore.saveMessages(chatId, [...current.messages.slice(0, end), marker, ...current.messages.slice(end)]);
+		const written = [...current.messages.slice(0, end), marker, ...current.messages.slice(end)];
+			// Plan 022 part 1: the course notes due for the new unit ride right after the marker.
+			const notes = current.tree && current.kind !== "practice" ? courseNotesFor(written, current.tree, current.courseMaterial) : [];
+			deps.chatStore.saveMessages(chatId, [...written.slice(0, end + 1), ...notes, ...written.slice(end + 1)]);
 		deps.chatStore.appendTurnUsage(chatId, {
 			id: crypto.randomUUID(),
 			messageId: marker.id,

@@ -118,3 +118,20 @@ export function fingerprint(systemPrompt: string, tools: readonly Tool[], messag
 export function removeWorkspace(chatId: string): void {
 	fs.rmSync(workspaceDir(chatId), { recursive: true, force: true });
 }
+
+/** Returns the chat's stored link when the agy conversation can be resumed
+ *  from this model, system prompt, tools and message prefix; otherwise null. */
+export function agyResumableLink(
+	chatId: string | undefined,
+	model: string,
+	systemPrompt: string,
+	tools: readonly Tool[],
+	messages: readonly Message[],
+): AgyLink | null {
+	const link = chatId && isSafeChatId(chatId) ? readLink(chatId) : null;
+	if (!link || link.messageCount === undefined || link.model !== model) return null;
+	const conversation = messages.filter((m) => m.role !== "system");
+	const sent = link.messageCount;
+	if (conversation[sent]?.role !== "assistant") return null;
+	return link.fingerprint === fingerprint(systemPrompt, tools, conversation.slice(0, sent)) ? link : null;
+}

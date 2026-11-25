@@ -28,9 +28,13 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { AGY_COMPACT_AT_BYTES, AGY_MAX_INPUT_BYTES, agyKeepRecentBytes, agyMessageBytes, antigravityRequestBytes, projectedAntigravityRequestBytes } from "../agent/antigravity/request.ts";
+import { chatStore } from "../store/chats.ts";
+import { condenseLessonRecordPlan } from "../core/lesson-record.ts";
+import { newCompactionSkippedMessage } from "../core/native-messages.ts";
+import { AGY_COMPACT_AT_BYTES, AGY_MAX_INPUT_BYTES, AGY_MIN_TURN_ROOM_BYTES, agyFixedBytes, agyKeepRecentBytes, agyMessageBytes, antigravityRequestBytes, projectedAntigravityRequestBytes } from "../agent/antigravity/request.ts";
+import { agyResumableLink } from "../agent/antigravity/link.ts";
 import { ANTIGRAVITY_PROVIDER } from "../core/contracts/antigravity.ts";
-import type { Usage } from "@earendil-works/pi-ai";
+import type { Tool, Usage } from "@earendil-works/pi-ai";
 import {
 	activeCompactionOf,
 	buildCompactionPrompt,
@@ -49,6 +53,7 @@ import {
 	type LhMarkerMessage,
 } from "../core/index.ts";
 import { emit } from "../core/events.ts";
+import { courseNotesFor } from "../core/course-notes.ts";
 import { newestLessonRecord, unitCutDue } from "../core/units.ts";
 import type { ChatStore } from "../core/ports.ts";
 import type { PiEngine } from "../agent/models.ts";
@@ -132,7 +137,7 @@ export interface CompactionDeps {
 	/** A provider byte cap also sizes the kept tail (Antigravity): the cut
 	 * keeps `budget` worth of recent messages measured by `size`, instead of
 	 * KEEP_RECENT_TOKENS, so the compacted request lands under the trigger. */
-	keptTail?: (messages: readonly LhMessage[]) => { budget: number; size?: (message: LhMessage) => number };
+	keptTail?: (messages: readonly LhMessage[], record?: ChatRecord) => { budget: number; size?: (message: LhMessage) => number; noGain?: boolean } | undefined;
 	/** Trigger against a prospective request without recording/summarizing
 	 * its new cargo. The cut and summary still use only saved history. */
 	projectMessages?: (record: ChatRecord) => readonly LhMessage[];
@@ -192,9 +197,28 @@ export function effectiveThresholdTokens(settingTokens: number | undefined, cont
  * end, which happens near ~71k tokens of lesson text — far below the token
  * trigger. Other providers have no byte cap (undefined). Content the CLI
  * cannot take never throws here; the stream reports it on the real request. */
-export function antigravityRequestTrigger(provider: string, instructions: string): CompactionDeps["requestOverLimit"] {
+export interface AgyResumeCheck {
+	chatId: string;
+	model: string;
+	tools?: readonly Tool[];
+}
+
+/** Is the agy conversation resumable for the coming turn (plan 022 part 4)? Then
+ * only the new messages go out and the model window rules, not the byte cap. Tools
+ * the gate cannot compute count as a full replay, the safe default. */
+function agyResumable(messages: readonly LhMessage[], instructions: string, resume?: AgyResumeCheck): boolean {
+	if (!resume?.tools) return false;
+	try {
+		return agyResumableLink(resume.chatId, resume.model, instructions, resume.tools, toLlmMessages(messages as readonly AgentMessage[])) !== null;
+	} catch {
+		return false;
+	}
+}
+
+export function antigravityRequestTrigger(provider: string, instructions: string, resume?: AgyResumeCheck): CompactionDeps["requestOverLimit"] {
 	if (provider !== ANTIGRAVITY_PROVIDER) return undefined;
 	return (messages) => {
+		if (agyResumable(messages, instructions, resume)) return false;
 		try {
 			return projectedAntigravityRequestBytes(toLlmMessages(messages as readonly AgentMessage[]), instructions) > AGY_COMPACT_AT_BYTES;
 		} catch {
@@ -205,12 +229,42 @@ export function antigravityRequestTrigger(provider: string, instructions: string
 
 /** Antigravity's kept tail: sized in replay bytes against the byte trigger,
  * budgeting for a summary at least as large as the chat's prior one. */
-export function antigravityKeptTail(provider: string, instructions: string): CompactionDeps["keptTail"] {
+export function antigravityKeptTail(provider: string, instructions: string, resume?: AgyResumeCheck): CompactionDeps["keptTail"] {
 	if (provider !== ANTIGRAVITY_PROVIDER) return undefined;
-	return (messages) => {
+	return (messages, record) => {
+		// A resumable conversation compacts by the model window: the usual token tail.
+		if (agyResumable(messages, instructions, resume)) return undefined;
 		const prior = activeCompactionOf(messages);
-		return { budget: agyKeepRecentBytes(instructions, prior ? Buffer.byteLength(prior.content) : 0), size: agyMessageBytes };
+		const priorBytes = prior ? Buffer.byteLength(prior.content) : 0;
+		// What a compaction cannot remove (plan 022 part 3): the condensed lesson
+		// record and the course notes the compaction appends after its marker.
+		const lessonRecord = newestLessonRecord(messages);
+		const recordBytes = lessonRecord ? Buffer.byteLength(condenseLessonRecordPlan(lessonRecord.content)) : 0;
+		const extra = recordBytes + dueNotesBytes(messages, record ?? recordOf(messages));
+		const budget = agyKeepRecentBytes(instructions, priorBytes, extra);
+		return { budget, size: agyMessageBytes, noGain: AGY_COMPACT_AT_BYTES - agyFixedBytes(instructions, priorBytes, extra) < AGY_MIN_TURN_ROOM_BYTES };
 	};
+}
+
+const NOTE_TYPES = new Set(["course-files", "course-method", "course-update", "exam-pattern", "reference"]);
+
+/** The bytes of the course notes a compaction would append: all of them, as the
+ * cut drops the earlier ones. A practice chat or one without a plan has none. */
+function dueNotesBytes(messages: readonly LhMessage[], record: ChatRecord | null): number {
+	if (!record?.tree || record.kind === "practice") return 0;
+	const bare = messages.filter((m) => m.role !== "custom" || !NOTE_TYPES.has(m.customType));
+	return courseNotesFor(bare, record.tree, record.courseMaterial).reduce((sum, note) => sum + Buffer.byteLength(note.content), 0);
+}
+
+/** The chat a message list belongs to, for a caller that passed no record. */
+function recordOf(messages: readonly LhMessage[]): ChatRecord | null {
+	const first = (messages[0] as { id?: string } | undefined)?.id;
+	if (!first) return null;
+	for (const { id } of chatStore.listChats()) {
+		const record = chatStore.getChat(id);
+		if (record?.messages[0]?.id === first) return record;
+	}
+	return null;
 }
 
 /** Antigravity's cap on the summary request itself: the summarizer sends its
@@ -280,7 +334,21 @@ async function compactPass(deps: CompactionDeps, chatId: string): Promise<"done"
 	const tokensBefore = projectedContextTokens(projected, deps.systemPromptTokens, model);
 	if (tokensBefore <= deps.thresholdTokens && !deps.requestOverLimit?.(projected)) return "done"; // settled beneath while we waited
 
-	const tail = deps.keptTail?.(messages);
+	const tail = deps.keptTail?.(messages, record);
+	if (tail?.noGain) {
+		// Plan 022 part 3: compacting would leave less than one turn's room. Send as
+		// is and say so once per span (since the newest lesson record or summary).
+		let spanStartIndex = -1;
+		messages.forEach((m, i) => {
+			if (m.role === "custom" && (m.customType === "lesson-record" || m.customType === "compaction")) spanStartIndex = i;
+		});
+		const told = messages.slice(spanStartIndex + 1).some((m) => m.role === "custom" && m.customType === "compaction-skipped");
+		if (!told) {
+			deps.chatStore.saveMessages(chatId, [...(deps.chatStore.getChat(chatId)?.messages ?? messages), newCompactionSkippedMessage()]);
+			emit("record-changed", { chatId });
+		}
+		return "done";
+	}
 	const cut = compactionCutIndex(messages, tail?.budget, model, tail?.size);
 	if (cut <= 0 || cut >= messages.length) return "done"; // no history can be dropped
 
@@ -363,7 +431,10 @@ async function compactPass(deps: CompactionDeps, chatId: string): Promise<"done"
 		const current = deps.chatStore.getChat(chatId);
 		if (!current) throw new Error(`Chat not found: ${chatId}`);
 		const end = messages.length;
-		deps.chatStore.saveMessages(chatId, [...current.messages.slice(0, end), marker, ...current.messages.slice(end)]);
+		const written = [...current.messages.slice(0, end), marker, ...current.messages.slice(end)];
+			// Plan 022 part 1: the course notes due for the kept region ride right after the marker.
+			const notes = current.tree && current.kind !== "practice" ? courseNotesFor(written, current.tree, current.courseMaterial) : [];
+			deps.chatStore.saveMessages(chatId, [...written.slice(0, end + 1), ...notes, ...written.slice(end + 1)]);
 		// The money channel: the summary is a real model call on the
 		// session's own engine — its usage keys to the marker (provenance:
 		// the transcript shows the compaction divider at the marker).

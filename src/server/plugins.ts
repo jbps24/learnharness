@@ -32,7 +32,7 @@ const core = {
 };
 const coreData = { directory: core.dataDirectory, ids: core.ids };
 type Host = ReturnType<typeof createPluginHost>;
-interface Runtime { host: Host; ready: Promise<void> }
+interface Runtime { host: Host; ready: Promise<void>; initialized: boolean }
 interface PluginGlobal { __lhPlugins?: Runtime }
 
 /** Single composition for every Next entry. Importing this module does not load
@@ -85,8 +85,9 @@ function runtime(): Runtime {
 		onChange: () => emit("plugins-changed", {}),
 		onNotification: (notification) => emit("plugin-message", notification),
 	});
+	const entry: Runtime = { host, ready: Promise.resolve(), initialized: false };
 	// Defer recovery/activation until the process-wide holder is published.
-	const ready = Promise.resolve().then(async () => {
+	entry.ready = Promise.resolve().then(async () => {
 		setPluginJobRecovery(job => recoverPluginBackgroundJob(job, {
 			jobStore: stores.jobStore, deliver: deliverJobResult,
 			readTask: (pluginId, taskId, requestId) => readPluginTaskRecord(pluginDirectory, pluginId, taskId, requestId, coreData),
@@ -98,8 +99,9 @@ function runtime(): Runtime {
 			installationErrors[id] = `Task recovery failed: ${error}`;
 		}
 		await host.initialize();
+		entry.initialized = true;
 	});
-	global.__lhPlugins = { host, ready };
+	global.__lhPlugins = entry;
 	return global.__lhPlugins;
 }
 
@@ -112,6 +114,11 @@ export async function getPluginHost(): Promise<Host> {
 /** Await startup once; actual factories run synchronously during per-turn Agent construction. */
 export async function getPluginAgentContributions(): Promise<NonNullable<AgentBuildOptions["pluginContributions"]>> {
 	return (await getPluginHost()).agentContributions;
+}
+/** Synchronous plugin agent contributions once startup has settled, else undefined. */
+export function readyPluginAgentContributions(): AgentBuildOptions["pluginContributions"] | undefined {
+	const current = (globalThis as typeof globalThis & PluginGlobal).__lhPlugins;
+	return current?.initialized ? current.host.agentContributions : undefined;
 }
 /** Await startup before reading canonical truth; the returned resolver itself is synchronous. */
 export async function getPluginQuestionTypeResolver(): Promise<Host["resolveQuestionType"]> {

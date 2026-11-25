@@ -123,7 +123,8 @@ Form: full
 
 ## Status per part
 
-- Part 1: not started
-- Part 2: not started
-- Part 3: not started
-- Part 4: not started
+- Part 1: **green** 2026-11-25 (build-review/20261125-194017-022-part-1, 2 rounds). Notes are appended only for non-practice chats with a tree, matching chat-handler.
+- Part 2: **green** 2026-11-25 (build-review/20261125-195832-022-part-2, 3 rounds, 1 ruling). Open: `native-messages.ts` ↔ `lesson-record.ts` import cycle (call-time only); a result containing `" — ` would split wrongly.
+- Part 3: **green** 2026-11-25 (build-review/20261125-202945-022-part-3, 5 rounds, 1 ruling). The plugin-API reference now lists `compaction-skipped`. Due notes are estimated with earlier note markers removed (over-counts, the safe direction).
+- Part 4: **green** 2026-11-25 (build-review/20261125-211454-022-part-4, 3 rounds). `agyResumableLink` is shared, but both chat-handler gates run before the agent's tools are built, so the gate treats every turn as a full replay (byte rule): the resume-aware trigger is not active in the app yet. A resumable compaction uses the token kept tail.
+- Hand check after the queue: typecheck, lint, tests 6867 pass / 0 fail / 2 skipped. One test batch was killed by the 300 s hang guard during the Part 2 run (load), and its later gates passed.

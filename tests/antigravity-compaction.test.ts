@@ -240,7 +240,7 @@ describe("the Antigravity kept tail", () => {
 	it("budgets against the chat's prior summary and measures messages in replay bytes", () => {
 		const kept = newUserMessage("recent");
 		const marker = newCompactionMarker("s".repeat(30_000), { firstKeptMessageId: kept.id, tokensBefore: 1, at: "fixture" });
-		const tail = antigravityKeptTail(ANTIGRAVITY_PROVIDER, TEACHING)!([newUserMessage("old"), kept, marker]);
+		const tail = antigravityKeptTail(ANTIGRAVITY_PROVIDER, TEACHING)!([newUserMessage("old"), kept, marker])!;
 		assert.equal(tail.budget, agyKeepRecentBytes(TEACHING, Buffer.byteLength(marker.content as string)));
 		assert.equal(tail.size, agyMessageBytes);
 		assert.ok(agyMessageBytes(newUserMessage("ä".repeat(1_000))) >= 2_000, "two-byte characters count twice");

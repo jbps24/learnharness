@@ -34,7 +34,9 @@ function outcomeOf(tool: "quiz" | "explain", d: QuestionAnswerData): string {
 	if (tool === "quiz" && d.correct === false) {
 		return `wrong (picked ${(d.answers ?? []).map((a) => `"${a.label}"`).join(", ")})`;
 	}
-	if (tool === "explain") return `own words, ungraded: "${clip(d.text ?? "", EXPLAIN_ANSWER_CLIP)}"`;
+	if (tool === "explain") {
+		return `own words, ungraded: "${clip(String(d.text ?? "").replace(/\s+/g, " ").trim(), EXPLAIN_ANSWER_CLIP)}"`;
+	}
 	return "answered";
 }
 
@@ -245,6 +247,63 @@ export function mergeJudgment(previous: LessonJudgment | null | undefined, parse
 	};
 }
 
+const QUESTION_LINE = /^ {4}· ([^ ]+) — "(.*)" — (.*)$/;
+const PLAN_STRUCTURAL_PREFIXES = ["- [", "- (", "Unit ", "Requires:", "## "];
+const EXPLAIN_RESULT_OPEN = 'own words, ungraded: "';
+
+/**
+ * Condense the per-question lines under each plan node into a counts line and
+ * the newest question not answered right. Only the "## Plan" section changes;
+ * idempotent (the condensed lines are not question lines).
+ */
+export function condenseLessonRecordPlan(text: string): string {
+	const out: string[] = [];
+	let inPlan = false;
+	let asked: { type: string; text: string; result: string }[] = [];
+	const flush = () => {
+		if (asked.length === 0) return;
+		const items = asked.map((q) => ({ ...q, category: q.result.replace(/ \(.*\)$/, "") }));
+		const counts = new Map<string, number>();
+		for (const q of items) counts.set(q.category, (counts.get(q.category) ?? 0) + 1);
+		out.push(`    · ${items.length} asked: ${[...counts].map(([category, n]) => `${n} ${category}`).join(", ")}`);
+		const gap = items.findLast((q) => q.category !== "right");
+		if (gap) out.push(`    · newest gap: ${gap.type} — "${gap.text}" — ${gap.result}`);
+		asked = [];
+	};
+	for (const line of text.split("\n")) {
+		if (line.startsWith("## ")) {
+			flush();
+			inPlan = line === "## Plan";
+			out.push(line);
+			continue;
+		}
+		const m = inPlan ? QUESTION_LINE.exec(line) : null;
+		if (m) {
+			asked.push({ type: m[1]!, text: m[2]!, result: m[3]! });
+			continue;
+		}
+		if (inPlan && asked.length > 0 && !PLAN_STRUCTURAL_PREFIXES.some((p) => line.startsWith(p))) {
+			const last = asked[asked.length - 1]!;
+			const trimmed = line.trim();
+			if (trimmed !== "") {
+				last.result =
+					last.result === "" || last.result === EXPLAIN_RESULT_OPEN
+						? `${last.result}${trimmed}`
+						: `${last.result} ${trimmed}`;
+				continue;
+			}
+			const isUnclosedExplain =
+				last.result.startsWith(EXPLAIN_RESULT_OPEN) &&
+				(last.result.length === EXPLAIN_RESULT_OPEN.length || !last.result.endsWith('"'));
+			if (isUnclosedExplain) continue;
+		}
+		flush();
+		out.push(line);
+	}
+	flush();
+	return out.join("\n");
+}
+
 /** The marker content: header, the computed facts verbatim, then the judgment. */
 export function renderLessonRecord(facts: string, judgment: LessonJudgment): string {
 	// Plan order and titles are read back from the facts' node lines.
@@ -260,7 +319,7 @@ export function renderLessonRecord(facts: string, judgment: LessonJudgment): str
 		...planOrder.filter((id) => judgment.nodes[id]),
 		...Object.keys(judgment.nodes).filter((id) => !titles.has(id)),
 	];
-	const out = [LESSON_RECORD_HEADER, "", facts, "## The learner, per node"];
+	const out = [LESSON_RECORD_HEADER, "", condenseLessonRecordPlan(facts), "## The learner, per node"];
 	for (const id of ordered) {
 		const n = judgment.nodes[id]!;
 		const title = titles.get(id);
