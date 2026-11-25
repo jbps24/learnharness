@@ -1,15 +1,16 @@
 import { projectionHeads } from "./compaction.ts";
-import { fileCategory, type CourseMaterial, type NodeMethod } from "./contracts/course.ts";
+import { fileCategory, type CourseFile, type CourseMaterial, type CourseUpdate, type NodeMethod } from "./contracts/course.ts";
 import { derivePlanStatusesLh, type PlanTree } from "./contracts/plan.ts";
 import {
 	newCourseFilesNoteMessage,
 	newCourseMethodNoteMessage,
+	newCourseUpdateNoteMessage,
 	newExamPatternNoteMessage,
 	newReferenceNoteMessage,
 	type LhMarkerMessage,
 	type LhMessage,
 } from "./native-messages.ts";
-import { unitIndexOf } from "./units.ts";
+import { teachTags, unitIndexOf } from "./units.ts";
 
 function fileName(path: string): string {
 	return path.split(/[\\/]/).pop() || path;
@@ -52,6 +53,63 @@ function methodNoteText(nodeId: string, title: string, material: CourseMaterial,
 		`${head} the learner's course works this as follows. Teach, check and grade exactly this route:`,
 		...route.map((m) => `${m.method} (${source(m)})`),
 	].join("\n");
+}
+
+/** The open items of a file's replacement (plan 015 part 3): shared by the [Course update] note and course_update. */
+export function courseUpdateOpenItems(
+	update: CourseUpdate,
+	messages: readonly LhMessage[],
+): { changed: string[]; dropped: string[]; newSections: Array<{ title: string; pages: string }>; planOpen: boolean } {
+	const at = Date.parse(update.at);
+	const taught = new Set<string>();
+	for (const tag of teachTags(messages)) {
+		const timestamp = (messages[tag.messageIndex] as { timestamp?: number } | undefined)?.timestamp;
+		if (typeof timestamp === "number" && timestamp < at) taught.add(tag.nodeId);
+	}
+	const nodes = update.nodes ?? [];
+	const changed = nodes
+		.filter((n) => n.kind === "changed" && taught.has(n.nodeId) && !update.revisited.includes(n.nodeId))
+		.map((n) => n.nodeId);
+	const dropped = nodes.filter((n) => n.kind === "dropped").map((n) => n.nodeId);
+	const newSections = update.newSections ?? [];
+	const planOpen = !update.planAsked && (dropped.length > 0 || newSections.length > 0);
+	return { changed, dropped, newSections, planOpen };
+}
+
+function courseUpdateNoteText(
+	file: CourseFile,
+	update: CourseUpdate,
+	tree: PlanTree,
+	messages: readonly LhMessage[],
+): string | null {
+	const open = courseUpdateOpenItems(update, messages);
+	if (open.changed.length === 0 && !open.planOpen) return null;
+	const title = (id: string) => tree.nodes.find((n) => n.id === id)?.title;
+	const label = (id: string) => (title(id) !== undefined ? `\`${id}\` (${title(id)})` : `\`${id}\``);
+	const lines = [
+		`[Course update] ${fileName(update.fromPath)} was replaced by a newer version, ${fileName(file.path)}. The [Course method] notes now show the new routes.`,
+	];
+	if (open.changed.length > 0) {
+		lines.push(
+			"Changed routes in steps already taught. When the learner next works on one of these, or at the next natural pause, point out briefly what changed (earlier route vs the new one) and check the new route once, then call course_update with the node id:",
+		);
+		for (const id of open.changed) {
+			const previous = update.previous.find((p) => p.nodeId === id);
+			const route = previous ? `, earlier route: ${previous.method}${previous.pages ? ` (${previous.pages})` : ""}` : "";
+			lines.push(`- ${label(id)}${route}`);
+		}
+	}
+	if (open.planOpen) {
+		if (open.changed.length > 0) lines.push("");
+		if (open.dropped.length > 0) lines.push(`Steps the new version no longer covers: ${open.dropped.map(label).join(", ")}`);
+		if (open.newSections.length > 0) {
+			lines.push(`Sections of the new version no plan step covers: ${open.newSections.map((s) => `${s.title} (${s.pages})`).join("; ")}`);
+		}
+		lines.push(
+			'Ask the learner with ask_user_question which of these to add as plan steps and which uncovered steps to drop. Rewrite the plan only for what they accept, then call course_update with "plan".',
+		);
+	}
+	return lines.join("\n");
 }
 
 /** The notes due before the next learner input of a teaching turn (plan 007 part 4). */
@@ -97,6 +155,20 @@ export function courseNotesFor(
 			if (text === null) continue;
 			const digest = digestOf(text);
 			if (!liveDigests.has(`${node.id}\n${digest}`)) notes.push(newCourseMethodNoteMessage(node.id, text, digest));
+		}
+
+		// Not limited to the current unit (plan 015 part 3).
+		for (const file of material.files) {
+			if (!file.update || !binding.has(file.path)) continue;
+			const text = courseUpdateNoteText(file, file.update, tree, messages);
+			if (text === null) continue;
+			const digest = digestOf(text);
+			const isLive = live.some(
+				(m) =>
+					m.role === "custom" && m.customType === "course-update"
+					&& (m.details as { digest?: string } | null)?.digest === digest,
+			);
+			if (!isLive) notes.push(newCourseUpdateNoteMessage(text, digest));
 		}
 	}
 

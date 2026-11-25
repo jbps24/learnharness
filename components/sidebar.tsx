@@ -47,7 +47,7 @@ const STORAGE_KEY = "lh:sidebar-open";
 /*
  * Narrow-window behavior (owner, 2026-09-17): below SIDEBAR_AUTOCLOSE the
  * sidebar would squeeze the page below the 640px window floor (the two
- * numbers compose: 640 + 288 sidebar = 928), so it auto-closes — and
+ * numbers compose: 640 + 240 minimum sidebar = 880), so it auto-closes — and
  * auto-RESTORES when the window widens again (owner choice: the sidebar
  * pops back, not a manual re-open). The whole behavior is one expression:
  * rendered = pref && !narrow, where pref is the persisted user choice.
@@ -63,7 +63,10 @@ const STORAGE_KEY = "lh:sidebar-open";
 import type { ChatGPTControlBridge, NativeSubscriptionControlBridge } from "@/src/core";
 import type { UpdateState } from "@/components/settings/update-settings.tsx";
 import { FilePathDropZone } from "@/components/file-path-drop-zone";
-const SIDEBAR_AUTOCLOSE = 928;
+import { DEFAULT_SIDEBAR_SHARE, SIDEBAR_AUTOCLOSE, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, shareFor, sidebarWidth } from "@/components/sidebar-width";
+
+const SHARE_KEY = "lh:sidebar-share";
+const KEY_STEP = 16;
 
 // Module scope, guarded for SSR (the server has no navigator).
 const IS_ELECTRON = typeof navigator !== "undefined" && navigator.userAgent.includes("Electron");
@@ -148,7 +151,8 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 		const off = window.lh?.onZoom?.(setZoomVar);
 		void window.lh?.getZoom?.().then(setZoomVar);
 
-		const stored = localStorage.getItem(STORAGE_KEY);
+		let stored: string | null = null;
+		try { stored = localStorage.getItem(STORAGE_KEY); } catch { /* storage denied: default */ }
 		// Default: open (first run introduces the sidebar).
 		setOpen(stored === null ? true : stored === "1");
 		setMounted(true);
@@ -425,7 +429,8 @@ function SessionsSidebar() {
 	const [query, setQuery] = useState("");
 	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
 	useEffect(() => {
-		const stored = window.localStorage.getItem(KIND_FILTER_KEY);
+		let stored: string | null = null;
+		try { stored = window.localStorage.getItem(KIND_FILTER_KEY); } catch { /* storage denied: default */ }
 		if (stored === "teach" || stored === "all" || stored === "practice") setKindFilter(stored);
 	}, []);
 	const setFilter = useCallback((f: SessionKindFilter) => {
@@ -435,6 +440,76 @@ function SessionsSidebar() {
 	const pathname = usePathname();
 	const router = useRouter();
 	const { open: openSettings } = useSettingsDialog();
+
+	/* WIDTH (plan 016): the learner's drag is stored as a share of the
+	   window width (sidebar-width.ts), so the sidebar follows the window.
+	   While dragging, `dragWidth` is the live px; the share is saved on
+	   release. Storage that throws just means the default. */
+	const [share, setShare] = useState(DEFAULT_SIDEBAR_SHARE);
+	const [windowWidth, setWindowWidth] = useState(1440);
+	const [dragWidth, setDragWidth] = useState<number | null>(null);
+	const stopDragRef = useRef<(() => void) | null>(null);
+	useEffect(() => {
+		setWindowWidth(window.innerWidth);
+		try {
+			const saved = Number.parseFloat(window.localStorage.getItem(SHARE_KEY) ?? "");
+			if (Number.isFinite(saved) && saved > 0 && saved <= 1) setShare(saved);
+		} catch { /* storage denied: default */ }
+		const onResize = () => setWindowWidth(window.innerWidth);
+		window.addEventListener("resize", onResize);
+		return () => {
+			window.removeEventListener("resize", onResize);
+			stopDragRef.current?.();
+		};
+	}, []);
+	const width = dragWidth ?? sidebarWidth(share, windowWidth);
+	const commitShare = (next: number) => {
+		setShare(next);
+		try { window.localStorage.setItem(SHARE_KEY, String(next)); } catch { /* storage denied */ }
+	};
+	const resetShare = () => {
+		setShare(DEFAULT_SIDEBAR_SHARE);
+		try { window.localStorage.removeItem(SHARE_KEY); } catch { /* storage denied */ }
+	};
+	const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+		stopDragRef.current?.();
+		const startX = e.clientX;
+		const startWidth = width;
+		const ww = window.innerWidth;
+		let latest = startWidth;
+		try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* not capturable */ }
+		const onMove = (ev: Event) => {
+			const x = (ev as PointerEvent).clientX;
+			latest = sidebarWidth(shareFor(startWidth + x - startX, ww), ww);
+			setDragWidth(latest);
+		};
+		const stop = () => {
+			window.removeEventListener("pointermove", onMove);
+			window.removeEventListener("pointerup", onUp);
+			window.removeEventListener("pointercancel", onUp);
+			stopDragRef.current = null;
+		};
+		const onUp = () => {
+			stop();
+			setDragWidth(null);
+			commitShare(shareFor(latest, ww));
+		};
+		window.addEventListener("pointermove", onMove);
+		window.addEventListener("pointerup", onUp);
+		window.addEventListener("pointercancel", onUp);
+		stopDragRef.current = stop;
+	};
+	const onHandleKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+		if (e.key === "Home") {
+			e.preventDefault();
+			resetShare();
+			return;
+		}
+		if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+		e.preventDefault();
+		const next = sidebarWidth(shareFor(width + (e.key === "ArrowRight" ? KEY_STEP : -KEY_STEP), windowWidth), windowWidth);
+		commitShare(shareFor(next, windowWidth));
+	};
 
 	/* New session (owner, 2026-09-13): NO POST — the button opens the
 	   sessionless draft view; the session is created only when the first
@@ -825,10 +900,11 @@ function SessionsSidebar() {
 
 	return (
 		<aside
-			className={cn("sidebar-motion shrink-0 overflow-hidden duration-200", open ? "w-72" : "w-0")}
+			className="sidebar-motion shrink-0 overflow-hidden duration-200"
+			style={{ width: open ? width : 0, transition: dragWidth === null ? undefined : "none" }}
 			aria-hidden={!open}
 		>
-			<div className="flex h-full w-72 flex-col border-r bg-background">
+			<div className="relative flex h-full flex-col border-r bg-background" style={{ width }}>
 				{/* LH wordmark — the owner's header; close toggle sits at the edge.
 				    Merged chrome (2026-09-17): in Electron this band is the
 				    window's drag surface and starts after the traffic lights
@@ -869,6 +945,22 @@ function SessionsSidebar() {
 						</Button>
 					</Hint>
 				</div>
+				{/* Drag handle on the right edge: pointer drag, ←/→ keys, Home or
+				    double-click resets to the default share. Rendered after the
+				    .lh-drag header band so .lh-no-drag carves out its top strip. */}
+				<div
+					role="separator"
+					aria-orientation="vertical"
+					aria-label="Resize sidebar"
+					aria-valuenow={width}
+					aria-valuemin={SIDEBAR_MIN_WIDTH}
+					aria-valuemax={SIDEBAR_MAX_WIDTH}
+					tabIndex={open ? 0 : -1}
+					onPointerDown={startDrag}
+					onKeyDown={onHandleKey}
+					onDoubleClick={resetShare}
+					className={cn("lh-no-drag absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize touch-none hover:bg-accent focus-visible:bg-accent focus-visible:outline-none", dragWidth !== null && "bg-accent")}
+				/>
 
 				{/* Core doors always lead explicit plugin sidebar placements. */}
 				<PluginSidebarActions>

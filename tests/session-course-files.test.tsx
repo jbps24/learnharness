@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { parseHTML } from "linkedom";
 import { createRoot } from "react-dom/client";
+import { InteractionLayersProvider } from "../components/interaction-layers.tsx";
 import { ServerEventsProvider, type NotifySource } from "../components/server-events.tsx";
 import { SessionCourseFiles } from "../components/session-course-files.tsx";
 import type { CourseMaterial } from "../src/core/contracts/course.ts";
@@ -122,9 +123,11 @@ async function mountHarness(options: {
 		currentActive = active;
 		await act(async () => {
 			root.render(
-				<ServerEventsProvider connect={() => source}>
-					<SessionCourseFiles chatId={currentChatId} active={currentActive} />
-				</ServerEventsProvider>,
+				<InteractionLayersProvider>
+					<ServerEventsProvider connect={() => source}>
+						<SessionCourseFiles chatId={currentChatId} active={currentActive} />
+					</ServerEventsProvider>
+				</InteractionLayersProvider>,
 			);
 		});
 		await flush();

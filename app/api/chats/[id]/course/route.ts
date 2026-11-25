@@ -3,23 +3,32 @@
  *
  * GET   → { material, nodes, lessonNodes }: the session's course files,
  *         methods and conflicts (null until the first file is collected)
- *         plus the plan nodes' id/title pairs for naming the methods. For a
+ *         plus the plan nodes' id/title pairs for naming the methods. Plan 015:
+ *         first flags a file whose content changed on disk (changedOnDisk). For a
  *         practice session, lessonNodes names the nodes of the lessons its
  *         inherited proposition methods came from.
  * PATCH → { path, binding }: the sidebar tick. Changes only `binding`.
  *         { path, category }: moves the file between Course material and
  *         Exams (plan 010) or Reference (plan 012); resets it to pending and queues it again.
- *         Both keys in one body: 400.
+ *         { path, retry: true }: plan 013. Sets a failed, ticked file back to
+ *         pending (error removed) and queues it again; 409 if it is not
+ *         failed or not ticked.
+ *         More than one of binding, category, retry in one body: 400.
+ * DELETE → { path }: plan 014. Removes the file and every stored entry that
+ *         names it, and cancels its queued or running assignment; 400 for a
+ *         malformed body, 404 for an unknown chat or path.
  */
-import { emit, fileCategory } from "@/src/core";
-import { assignAddedCourseFiles, stores } from "@/src/server";
+import { emit, fileCategory, removeCourseFile } from "@/src/core";
+import { assignAddedCourseFiles, assignReplacedCourseFile, cancelCourseFile, refreshCourseFileChanges, stores } from "@/src/server";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
 	const { id } = await ctx.params;
 	const record = stores.chatStore.getChat(id);
 	if (!record) return Response.json({ error: "Unknown chat" }, { status: 404 });
+	// Plan 015: a file whose content changed on disk under the same name is flagged.
+	const courseMaterial = await refreshCourseFileChanges(id);
 	const lessonNodes: Array<{ lessonId: string; id: string; title: string }> = [];
-	const propositionMethods = record.courseMaterial?.propositionMethods ?? [];
+	const propositionMethods = courseMaterial?.propositionMethods ?? [];
 	if (record.kind === "practice" && propositionMethods.length > 0) {
 		const nodeIdsByLesson = new Map<string, Set<string>>();
 		for (const method of propositionMethods) {
@@ -35,7 +44,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 		}
 	}
 	return Response.json({
-		material: record.courseMaterial ?? null,
+		material: courseMaterial ?? null,
 		nodes: (record.tree?.nodes ?? []).map((node) => ({ id: node.id, title: node.title })),
 		lessonNodes,
 	});
@@ -45,22 +54,37 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 	const { id } = await ctx.params;
 	const record = stores.chatStore.getChat(id);
 	if (!record) return Response.json({ error: "Unknown chat" }, { status: 404 });
-	const body = (await request.json().catch(() => null)) as { path?: unknown; binding?: unknown; category?: unknown } | null;
+	const body = (await request.json().catch(() => null)) as { path?: unknown; binding?: unknown; category?: unknown; retry?: unknown } | null;
 	const isObject = typeof body === "object" && body !== null && !Array.isArray(body);
 	const hasCategory = isObject && "category" in body;
 	const hasBinding = isObject && "binding" in body;
+	const hasRetry = isObject && "retry" in body;
 	if (
 		!isObject ||
 		typeof body.path !== "string" ||
-		hasCategory === hasBinding ||
+		Number(hasCategory) + Number(hasBinding) + Number(hasRetry) !== 1 ||
 		(hasBinding && typeof body.binding !== "boolean") ||
+		(hasRetry && body.retry !== true) ||
 		(hasCategory && body.category !== "material" && body.category !== "exam" && body.category !== "reference")
 	) {
-		return Response.json({ error: "Expected { path: string, binding: boolean } or { path: string, category: \"material\" | \"exam\" | \"reference\" }" }, { status: 400 });
+		return Response.json({ error: "Expected { path: string, binding: boolean }, { path: string, category: \"material\" | \"exam\" | \"reference\" } or { path: string, retry: true }" }, { status: 400 });
 	}
 	const material = record.courseMaterial;
 	const target = material?.files.find((file) => file.path === body.path);
 	if (!material || !target) return Response.json({ error: "Unknown course file" }, { status: 404 });
+	if (hasRetry) {
+		if (target.status !== "failed") return Response.json({ error: "Only a failed course file can be retried." }, { status: 409 });
+		if (!target.binding) return Response.json({ error: "Tick the file to read it again." }, { status: 409 });
+		const { error: _error, ...rest } = target;
+		stores.chatStore.setCourseMaterial(id, {
+			...material,
+			files: material.files.map((file) => (file.path === target.path ? { ...rest, status: "pending" as const } : file)),
+		});
+		emit("course-material-changed", { chatId: id });
+		if (target.update && !target.update.nodes) assignReplacedCourseFile(id, target.path);
+		else assignAddedCourseFiles(id, [target.path]);
+		return Response.json({ ok: true });
+	}
 	if (hasCategory) {
 		const category = body.category as "material" | "exam" | "reference";
 		if (fileCategory(target) === category) return Response.json({ ok: true });
@@ -91,6 +115,23 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 		...material,
 		files: material.files.map((file) => (file.path === target.path ? { ...file, binding } : file)),
 	});
+	emit("course-material-changed", { chatId: id });
+	return Response.json({ ok: true });
+}
+
+export async function DELETE(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
+	const { id } = await ctx.params;
+	const record = stores.chatStore.getChat(id);
+	if (!record) return Response.json({ error: "Unknown chat" }, { status: 404 });
+	const body = (await request.json().catch(() => null)) as { path?: unknown } | null;
+	if (typeof body !== "object" || body === null || Array.isArray(body) || typeof body.path !== "string") {
+		return Response.json({ error: "Expected { path: string }" }, { status: 400 });
+	}
+	const path = body.path;
+	const material = record.courseMaterial;
+	if (!material?.files.some((file) => file.path === path)) return Response.json({ error: "Unknown course file" }, { status: 404 });
+	stores.chatStore.setCourseMaterial(id, removeCourseFile(material, path));
+	cancelCourseFile(id, path);
 	emit("course-material-changed", { chatId: id });
 	return Response.json({ ok: true });
 }

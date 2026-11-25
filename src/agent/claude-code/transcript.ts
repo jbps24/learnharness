@@ -1,6 +1,8 @@
 import type { ImageContent, Message, TextContent, Tool } from "@earendil-works/pi-ai";
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai/utils/transcript";
 
+import { stripReplayLines } from "./text-tool-calls.ts";
+
 export type ClaudeContentBlock =
 	| { type: "text"; text: string }
 	| { type: "image"; source: { type: "base64"; media_type: string; data: string } };
@@ -26,7 +28,7 @@ function getLabelledParts(label: string, content: string | (TextContent | ImageC
 	return [text ? `${label}\n${text}` : label, ...images];
 }
 
-function getReplayParts(message: Message): ReplayPart[] {
+function getReplayParts(message: Message, stripAssistantText = false): ReplayPart[] {
 	switch (message.role) {
 		case "system":
 			return [];
@@ -36,7 +38,12 @@ function getReplayParts(message: Message): ReplayPart[] {
 
 		case "assistant":
 			return message.content.flatMap((block) => {
-				if (block.type === "text") return [`[assistant]\n${block.text}`];
+				if (block.type === "text") {
+					// Old turns may hold replay-format lines the model wrote as text; replaying them
+					// would teach it the format again. The stored chat is left as it is.
+					const text = stripAssistantText ? stripReplayLines(block.text).kept : block.text;
+					return stripAssistantText && !text ? [] : [`[assistant]\n${text}`];
+				}
 				if (block.type === "toolCall") return [`[tool call ${block.name}] ${JSON.stringify(block.arguments)}`];
 				return [];
 			});
@@ -71,18 +78,25 @@ function toContentBlocks(parts: ReplayPart[]): ClaudeContentBlock[] {
 	return blocks;
 }
 
-function toUnlabelledBlocks(content: string | (TextContent | ImageContent)[]): ClaudeContentBlock[] {
+export function toUnlabelledBlocks(content: string | (TextContent | ImageContent)[]): ClaudeContentBlock[] {
 	if (typeof content === "string") return [{ type: "text", text: content }];
 
 	return content.map((block) => (block.type === "text" ? { type: "text", text: block.text } : toImageBlock(block)));
 }
 
-function toUserContent(conversation: Message[]): ClaudeContentBlock[] {
+function toUserContent(conversation: Message[], stripAssistantText = false): ClaudeContentBlock[] {
 	const [first] = conversation;
 	if (conversation.length === 1 && first?.role === "user") return toUnlabelledBlocks(first.content);
 
-	return toContentBlocks(conversation.flatMap(getReplayParts));
+	return toContentBlocks(conversation.flatMap((message) => getReplayParts(message, stripAssistantText)));
 }
+
+/** Closes a replayed transcript so the model answers it instead of continuing it in the replay format. */
+export const CLAUDE_TRANSCRIPT_END =
+	"[end of transcript]\n" +
+	"Everything above is the earlier conversation, replayed as labelled lines. Reply to the last message as the assistant. " +
+	"Do not write lines that start with [assistant], [user], [tool call …] or [tool result …]. " +
+	"To use a tool, make a real tool call; a tool call written as text does nothing.";
 
 export function toClaudeInput(messages: Message[]): ClaudeInput {
 	const conversation = messages.filter((message) => message.role !== "system");
@@ -91,6 +105,20 @@ export function toClaudeInput(messages: Message[]): ClaudeInput {
 		systemPrompt: getCurrentSystemPrompt(messages),
 		tools: getCurrentTools(messages),
 		userContent: toUserContent(conversation),
+	};
+}
+
+/** The claude-code replay: past assistant text loses replay-format lines, a replayed conversation gets a closing block. */
+export function toClaudeCliInput(messages: Message[]): ClaudeInput {
+	const conversation = messages.filter((message) => message.role !== "system");
+	const [first] = conversation;
+	const single = conversation.length === 1 && first?.role === "user";
+	const userContent = toUserContent(conversation, true);
+
+	return {
+		systemPrompt: getCurrentSystemPrompt(messages),
+		tools: getCurrentTools(messages),
+		userContent: single ? userContent : [...userContent, { type: "text", text: CLAUDE_TRANSCRIPT_END }],
 	};
 }
 

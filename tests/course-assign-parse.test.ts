@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { COURSE_METHOD_CAP, type CourseMaterial } from "../src/core/contracts/course.ts";
+import { COURSE_METHOD_CAP, NEW_SECTIONS_CAP, type CourseMaterial } from "../src/core/contracts/course.ts";
 import {
 	COURSE_ASSIGN_INSTRUCTIONS,
 	applyAssignment,
@@ -34,6 +34,19 @@ describe("buildAssignmentPrompt", () => {
 		assert.ok(prompt.includes("Chapter 3"));
 		assert.ok(prompt.includes("/course/notes.md"));
 		assert.ok(prompt.includes("Use Nyquist plot crossing."));
+	});
+
+	// plan 015 part 2: replace-mode prompt lists per node the previous version's method
+	it("includes previousMethods for target nodes in replace mode", () => {
+		const prompt = buildAssignmentPrompt({
+			path: "/course/regelung-v2.pdf",
+			targets: [{ id: "n1", title: "Amplitude margin" }],
+			previousMethods: {
+				n1: { pages: "S. 10", method: "Old Bode step." },
+			},
+		});
+		assert.ok(prompt.includes("Old Bode step."));
+		assert.ok(prompt.includes("S. 10"));
 	});
 });
 
@@ -188,6 +201,112 @@ describe("parseAssignment", () => {
 		const parsed = parseAssignment(JSON.stringify({ category: "textbook", nodes: [] }), TARGETS);
 		assert.equal(parsed.ok, false);
 		assert.ok(parsed.problems.length > 0);
+	});
+
+	// plan 015 part 2: parseAssignment accepts sameAsPreviousVersion (boolean | null) and newSections in replace mode
+	it("accepts sameAsPreviousVersion and newSections in replace mode", () => {
+		const raw = JSON.stringify({
+			category: "material",
+			nodes: [
+				{ nodeId: "n1", pages: "S. 1", method: "Same route.", sameRouteAsExisting: null, sameAsPreviousVersion: true },
+				{ nodeId: "n2", pages: "S. 2", method: "Changed route.", sameRouteAsExisting: null, sameAsPreviousVersion: false },
+				{ nodeId: "n3", pages: "S. 3", method: "Newly covered.", sameRouteAsExisting: null, sameAsPreviousVersion: null },
+			],
+			newSections: [{ title: "Root locus", pages: "S. 40–45" }],
+		});
+		const parsed = parseAssignment(raw, TARGETS, { replace: true });
+		assert.deepEqual(parsed, {
+			ok: true,
+			value: {
+				category: "material",
+				nodes: [
+					{ nodeId: "n1", pages: "S. 1", method: "Same route.", sameRouteAsExisting: null, sameAsPreviousVersion: true },
+					{ nodeId: "n2", pages: "S. 2", method: "Changed route.", sameRouteAsExisting: null, sameAsPreviousVersion: false },
+					{ nodeId: "n3", pages: "S. 3", method: "Newly covered.", sameRouteAsExisting: null, sameAsPreviousVersion: null },
+				],
+				newSections: [{ title: "Root locus", pages: "S. 40–45" }],
+			},
+		});
+	});
+
+	// plan 015 part 2: newSections allows up to NEW_SECTIONS_CAP (15) entries and rejects 16
+	it("accepts newSections at NEW_SECTIONS_CAP and rejects one over the cap", () => {
+		const makeSections = (count: number) =>
+			Array.from({ length: count }, (_, i) => ({ title: `Section ${i + 1}`, pages: `p. ${i + 1}` }));
+
+		const ok = parseAssignment(
+			JSON.stringify({ category: "material", nodes: [], newSections: makeSections(NEW_SECTIONS_CAP) }),
+			TARGETS,
+			{ replace: true },
+		);
+		assert.equal(ok.ok, true);
+
+		const bad = parseAssignment(
+			JSON.stringify({ category: "material", nodes: [], newSections: makeSections(NEW_SECTIONS_CAP + 1) }),
+			TARGETS,
+			{ replace: true },
+		);
+		assert.equal(bad.ok, false);
+		assert.ok(bad.problems.length > 0);
+	});
+
+	// plan 015 part 2: newSections entries require non-empty title and pages
+	it("rejects newSections entries with empty or whitespace-only title or pages", () => {
+		for (const badSection of [
+			{ title: "   ", pages: "p. 1" },
+			{ title: "Valid title", pages: "   " },
+			{ title: "", pages: "" },
+		]) {
+			const parsed = parseAssignment(
+				JSON.stringify({ category: "material", nodes: [], newSections: [badSection] }),
+				TARGETS,
+				{ replace: true },
+			);
+			assert.equal(parsed.ok, false);
+			assert.ok(parsed.problems.length > 0);
+		}
+	});
+
+	// plan 015 part 2: sameAsPreviousVersion must be boolean or null in replace mode
+	it("rejects missing or invalid sameAsPreviousVersion in replace mode", () => {
+		for (const invalid of ["true", 1, {}, undefined]) {
+			const node: Record<string, unknown> = {
+				nodeId: "n1",
+				pages: "p. 1",
+				method: "Valid.",
+				sameRouteAsExisting: null,
+			};
+			if (invalid !== undefined) node.sameAsPreviousVersion = invalid;
+			const parsed = parseAssignment(
+				JSON.stringify({ category: "material", nodes: [node], newSections: [] }),
+				TARGETS,
+				{ replace: true },
+			);
+			assert.equal(parsed.ok, false);
+			assert.ok(parsed.problems.length > 0);
+		}
+	});
+
+	// plan 015 part 2: sameAsPreviousVersion and newSections are accepted in replace mode only
+	it("rejects sameAsPreviousVersion and newSections outside replace mode", () => {
+		const withSame = parseAssignment(
+			JSON.stringify({
+				category: "material",
+				nodes: [{ nodeId: "n1", pages: "p. 1", method: "Valid.", sameRouteAsExisting: null, sameAsPreviousVersion: true }],
+			}),
+			TARGETS,
+		);
+		assert.equal(withSame.ok, false);
+
+		const withSections = parseAssignment(
+			JSON.stringify({
+				category: "material",
+				nodes: [],
+				newSections: [{ title: "Extra", pages: "p. 10" }],
+			}),
+			TARGETS,
+		);
+		assert.equal(withSections.ok, false);
 	});
 });
 
@@ -353,5 +472,23 @@ describe("applyAssignment", () => {
 		const next = applyAssignment(initial, "/course/a.pdf", { category: "material", nodes: [] });
 		assert.equal(next.files[0]?.status, "assigned");
 		assert.equal(next.files[0]?.error, undefined);
+	});
+});
+
+describe("buildAssignmentPrompt replace + existingMethods", () => {
+	it("includes previousMethods even when existingMethods are present for the same node", () => {
+		const prompt = buildAssignmentPrompt({
+			path: "/course/regelung-v2.pdf",
+			targets: [{ id: "n1", title: "Amplitude margin" }],
+			existingMethods: {
+				n1: [{ path: "/course/other.md", method: "Other file route." }],
+			},
+			previousMethods: {
+				n1: { pages: "S. 10", method: "Old Bode step." },
+			},
+		});
+		assert.ok(prompt.includes("Other file route."));
+		assert.ok(prompt.includes("Old Bode step."));
+		assert.ok(prompt.includes("S. 10"));
 	});
 });

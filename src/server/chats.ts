@@ -1,5 +1,6 @@
 import { abortExtraction, extractionStatuses } from "../agent/subagents/extraction.ts";
 import { isJobLive } from "../agent/subagents/aborts.ts";
+import { removeWorkspace } from "../agent/antigravity/link.ts";
 import { coverageOf } from "../core/coverage.ts";
 import { deleteChatTraces, type ChatDeleteMode, type ChatDeletionStats } from "../core/graph-deletion.ts";
 import { titleFromPrompt } from "../core/contracts.ts";
@@ -179,6 +180,7 @@ function finishChatRecordDeletion(chatId: string): number {
 		clearTurnFailure(chatId);
 		sideChats.stopAll(chatId); // a running side answer has nowhere left to land
 	}
+	removeWorkspace(chatId);
 	return jobsRemoved;
 }
 

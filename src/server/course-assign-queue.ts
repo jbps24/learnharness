@@ -9,6 +9,7 @@ import {
 import { registerJobAbort, unregisterJobAbort } from "../agent/subagents/aborts.ts";
 import type { CourseFileStatus, CourseMaterial } from "../core/contracts/course.ts";
 import type { ChatStore, JobStore } from "../core/ports.ts";
+import { readFileFingerprint, type CourseFingerprint } from "./course-fingerprint.ts";
 
 export type { CourseAssignWorker, CourseAssignWorkerInput, CourseAssignWorkerResult } from "../core/course-assign.ts";
 
@@ -21,23 +22,34 @@ export interface CourseAssignQueueDeps {
 
 export interface CourseAssignQueue {
 	enqueue(chatId: string, targets: readonly AssignmentTarget[]): Promise<void>;
+	cancel(chatId: string, path: string): void;
 }
 
 const INTERRUPTED = "Assignment was interrupted.";
+const REMOVED = "Removed from the list.";
 
 /** One serial queue per chat (plan 007 part 3). `enqueue` resolves once its
  *  own jobs have run; jobs from separate calls run one at a time, in order. */
 export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssignQueue {
 	const tails = new Map<string, Promise<void>>();
+	const running = new Map<string, AbortController>();
+	const runKey = (chatId: string, path: string) => `${chatId}\0${path}`;
+	const cancelled = new WeakSet<AbortController>();
 	let jobSeq = 0;
 
-	function setStatus(chatId: string, path: string, status: CourseFileStatus, error?: string): void {
+	function setStatus(chatId: string, path: string, status: CourseFileStatus, error?: string, fingerprint?: CourseFingerprint | null): void {
 		const material = deps.chatStore.getChat(chatId)?.courseMaterial;
 		if (!material) return;
 		const files = material.files.map((file) => {
 			if (file.path !== path) return file;
-			const { error: _error, ...rest } = file;
-			return { ...rest, status, ...(error !== undefined ? { error } : {}) };
+			const { error: _error, changedOnDisk: _changed, ...rest } = file;
+			return {
+				...rest,
+				...(fingerprint ? { fingerprint } : {}),
+				...(fingerprint === undefined && file.changedOnDisk ? { changedOnDisk: true } : {}),
+				status,
+				...(error !== undefined ? { error } : {}),
+			};
 		});
 		deps.chatStore.setCourseMaterial(chatId, { ...material, files });
 		deps.emit?.("course-material-changed", { chatId });
@@ -46,6 +58,16 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 	function save(chatId: string, material: CourseMaterial): void {
 		deps.chatStore.setCourseMaterial(chatId, material);
 		deps.emit?.("course-material-changed", { chatId });
+	}
+
+	/** Plan 014: the learner removed the file from the list. */
+	function isRemoved(chatId: string, path: string): boolean {
+		const material = deps.chatStore.getChat(chatId)?.courseMaterial;
+		return !material?.files.some((f) => f.path === path);
+	}
+
+	function discardRemoved(jobId: string): void {
+		deps.jobStore.updateJob(jobId, { status: "error", error: REMOVED, activity: "failed" });
 	}
 
 	async function runOne(chatId: string, target: AssignmentTarget): Promise<void> {
@@ -74,7 +96,12 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 			(existingMethods[m.nodeId] ??= []).push({ path: m.path, method: m.method });
 		}
 
-		setStatus(chatId, target.path, "assigning");
+		// Plan 015: the fingerprint is stored when the read starts and clears a changed-on-disk flag.
+		setStatus(chatId, target.path, "assigning", undefined, await readFileFingerprint(target.path));
+		const previousMethods: Record<string, { pages?: string; method: string }> = {};
+		for (const p of target.replace ? (file.update?.previous ?? []) : []) {
+			if (wanted.has(p.nodeId)) previousMethods[p.nodeId] = p.pages === undefined ? { method: p.method } : { pages: p.pages, method: p.method };
+		}
 		const job = deps.jobStore.createJob({
 			// A core kind keeps the dock's rendering; nothing runs it through the job runner.
 			kind: "pdf",
@@ -85,6 +112,9 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 		});
 
 		const controller = new AbortController();
+		const key = runKey(chatId, target.path);
+		const gone = () => cancelled.has(controller) || isRemoved(chatId, target.path);
+		running.set(key, controller);
 		registerJobAbort(job.id, controller);
 		try {
 			const stored = material.referenceIndex?.find((entry) => entry.path === target.path);
@@ -99,10 +129,15 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 				path: target.path,
 				targets,
 				existingMethods,
+				...(target.replace ? { previousMethods } : {}),
 				...(category ? { category } : {}),
 				...(file.category === "reference" && stored ? { referenceIndex: { from: stored.from, sections: stored.sections } } : {}),
 				abortSignal: controller.signal,
 			});
+			if (gone()) {
+				discardRemoved(job.id);
+				return;
+			}
 			if (controller.signal.aborted) throw new Error("aborted");
 			if (outcome.ok) {
 				const freshChat = deps.chatStore.getChat(chatId);
@@ -114,7 +149,7 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 						? { category: "exam", nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) }
 						: outcome.result.category === "reference"
 							? { ...outcome.result, nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) }
-							: { category: "material", nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) };
+							: { ...outcome.result, nodes: outcome.result.nodes.filter((n) => liveIds.has(n.nodeId)) };
 				const currentFile = current.files.find((f) => f.path === target.path);
 				if (
 					currentFile?.categoryBy === "learner" &&
@@ -132,10 +167,15 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 				deps.jobStore.updateJob(job.id, { status: "error", error: outcome.error, activity: "failed" });
 			}
 		} catch (err) {
+			if (gone()) {
+				discardRemoved(job.id);
+				return;
+			}
 			console.error(`[chat ${chatId}] course assignment of ${target.path} failed:`, err);
 			setStatus(chatId, target.path, "failed", INTERRUPTED);
 			deps.jobStore.updateJob(job.id, { status: "error", error: INTERRUPTED, activity: "failed" });
 		} finally {
+			running.delete(key);
 			unregisterJobAbort(job.id);
 		}
 	}
@@ -154,6 +194,12 @@ export function createCourseAssignQueue(deps: CourseAssignQueueDeps): CourseAssi
 			});
 			tails.set(chatId, run);
 			return run;
+		},
+		cancel(chatId, path) {
+			const controller = running.get(runKey(chatId, path));
+		if (!controller) return;
+		cancelled.add(controller);
+		controller.abort();
 		},
 	};
 }

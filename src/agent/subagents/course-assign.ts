@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import {
 	buildAssignmentPrompt,
 	COURSE_ASSIGN_INSTRUCTIONS,
+	COURSE_ASSIGN_REPLACE_INSTRUCTIONS,
 	parseAssignment,
 	type AssignmentResult,
 	type CourseAssignWorker,
@@ -99,11 +100,10 @@ async function streamOnce(engine: PiEngine, systemPrompt: string, messages: Mess
 }
 
 /** Read a text file by paging; the final assistant text is the raw answer. */
-async function runTextAssignment(engine: PiEngine, path: string, prompt: string, signal: AbortSignal): Promise<string> {
+async function runTextAssignment(engine: PiEngine, path: string, prompt: string, signal: AbortSignal, system: string): Promise<string> {
 	const chunks = chunkText(await readFile(resolveSourcePath(path), "utf8"));
 	const requests = createWorkerRequestScope(engine.streamFn, signal);
 	const sessionId = randomUUID();
-	const system = COURSE_ASSIGN_INSTRUCTIONS;
 	let messages: Message[] = [
 		{
 			role: "user",
@@ -196,7 +196,15 @@ export function createCourseAssignWorker(options: CourseAssignWorkerOptions): Co
 			return runPointerMapper(engine, input, input.referenceIndex);
 		}
 		const targetIds = input.targets.map((t) => t.id);
-		const prompt = buildAssignmentPrompt({ path: input.path, targets: input.targets, existingMethods: input.existingMethods, ...(input.category ? { category: input.category } : {}) });
+		const replace = input.previousMethods !== undefined;
+		const instructions = replace ? `${COURSE_ASSIGN_INSTRUCTIONS}\n\n${COURSE_ASSIGN_REPLACE_INSTRUCTIONS}` : COURSE_ASSIGN_INSTRUCTIONS;
+		const prompt = buildAssignmentPrompt({
+			path: input.path,
+			targets: input.targets,
+			existingMethods: input.existingMethods,
+			...(input.category ? { category: input.category } : {}),
+			...(input.previousMethods ? { previousMethods: input.previousMethods } : {}),
+		});
 		const isPdf = input.path.toLowerCase().endsWith(".pdf");
 
 		const run = async (extra: string): Promise<string | { failure: string }> => {
@@ -204,12 +212,12 @@ export function createCourseAssignWorker(options: CourseAssignWorkerOptions): Co
 			if (isPdf) {
 				const result = await runPdfReaderAgent(
 					{ path: input.path, question: task },
-					{ engine, abortSignal: input.abortSignal, chatId: input.chatId, instructionsSuffix: COURSE_ASSIGN_INSTRUCTIONS },
+					{ engine, abortSignal: input.abortSignal, chatId: input.chatId, instructionsSuffix: instructions },
 				);
 				if (/^PDF failed:/i.test(result.brief)) return { failure: result.brief.replace(/^PDF failed:\s*/i, "") };
 				return jsonCandidate(result.brief);
 			}
-			return jsonCandidate(await runTextAssignment(engine, input.path, task, input.abortSignal));
+			return jsonCandidate(await runTextAssignment(engine, input.path, task, input.abortSignal, instructions));
 		};
 
 		let parsed: ReturnType<typeof parseAssignment> | undefined;
@@ -217,7 +225,7 @@ export function createCourseAssignWorker(options: CourseAssignWorkerOptions): Co
 		for (let attempt = 0; attempt < 2; attempt++) {
 			const answer = await run(extra);
 			if (typeof answer !== "string") return { ok: false, error: answer.failure };
-			parsed = parseAssignment(answer, targetIds);
+			parsed = parseAssignment(answer, targetIds, { replace });
 			if (parsed.ok && parsed.value.category === "reference") {
 				let index = input.referenceIndex;
 				if (!index) {

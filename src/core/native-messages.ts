@@ -93,6 +93,7 @@ export interface LhMarkerMessage {
 		| "break-ended"
 		| "course-files"
 		| "course-method"
+		| "course-update"
 		| "exam-pattern"
 		| "reference";
 	/** The model-facing text ("" for plan blocks — UI-only). */
@@ -438,6 +439,18 @@ export function newCourseMethodNoteMessage(nodeId: string, text: string, digest:
 		content: text,
 		display: false,
 		details: { nodeId, digest },
+		timestamp: Date.now(),
+	};
+}
+
+export function newCourseUpdateNoteMessage(text: string, digest: string): LhMarkerMessage {
+	return {
+		id: newMessageId(),
+		role: "custom",
+		customType: "course-update",
+		content: text,
+		display: false,
+		details: { digest },
 		timestamp: Date.now(),
 	};
 }
@@ -1124,7 +1137,7 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
 		if (["practice-thinking", "plugin-problem-submission", "practice-next", "break-taken", "break-skipped", "break-ended"].includes(message.customType)) return "learner";
-		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "lesson-record", "units-note", "break-note", "course-files", "course-method", "exam-pattern", "reference"].includes(message.customType) ? "neutral" : "unrecognizable";
+		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "lesson-record", "units-note", "break-note", "course-files", "course-method", "course-update", "exam-pattern", "reference"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {
 		const pluginAnswer = readPluginQuestionAnswer(message.details);

@@ -117,3 +117,5 @@ export * from "./drawn-history.ts";
 export * from "./find-text.ts";
 export * from "./course-files.ts";
 export * from "./course-practice.ts";
+export * from "./course-remove.ts";
+export * from "./course-replace.ts";

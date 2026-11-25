@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,10 +32,11 @@ import { ClaudeLaunchError, createClaudeLauncher } from "./launch.ts";
 import { parseCliLine, type CliBlock, type CliEvent, type CliUsage } from "./cli-events.ts";
 import { ClaudeCodeError } from "./constants.ts";
 import { ContextWindowProbe } from "./context-window.ts";
-import { addLiveProcess, getLiveProcess, removeLiveProcess, type LiveProcess } from "./live-processes.ts";
+import { addLiveProcess, countLiveProcesses, getHeldProcess, getLiveProcess, removeLiveProcess, type LiveProcess } from "./live-processes.ts";
 import { configurationForReuse, conversationForReuse } from "./reuse-context.ts";
 import { BRIDGE_SERVER_NAME, createToolBridge, toolNameFromMcp, type PendingToolCall, type ToolBridge } from "./tool-bridge.ts";
-import { toClaudeInput, toStreamJsonLine } from "./transcript.ts";
+import { salvageToolCall, stripReplayLines } from "./text-tool-calls.ts";
+import { toClaudeCliInput, toStreamJsonLine, toUnlabelledBlocks } from "./transcript.ts";
 
 type RunClaudeOptions = { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal };
 
@@ -46,7 +48,7 @@ export type RunClaude = (args: string[], options: RunClaudeOptions) => ClaudeChi
 // times out first.
 // A held call sends no progress, so the CLI's separate idle timeout (300 s by default) needs
 // the same bound, or it aborts an unanswered question first.
-const MCP_TOOL_TIMEOUT_MS = 30 * 60_000;
+const MCP_TOOL_TIMEOUT_MS = 60 * 60_000;
 
 const PRIVATE_FILE_MODE = 0o600;
 
@@ -261,6 +263,8 @@ class ClaudeTurn {
 
 	admit(calls: ToolCall[]): void {
 		this.start();
+		// A turn with a real call gets no salvaged second one; its replay-format lines are only cut.
+		this.stripText();
 		for (const call of calls) {
 			const contentIndex = this.output.content.length;
 			this.output.content.push(call);
@@ -386,9 +390,42 @@ class ClaudeTurn {
 			return;
 		}
 
+		const cut = this.stripText();
+		const salvaged = stopReason === "stop" && this.salvage(cut);
+
 		this.finished = true;
-		this.stream.push({ type: "done", reason: stopReason, message: this.output });
+		this.stream.push({ type: "done", reason: salvaged ? "toolUse" : stopReason, message: this.output });
 		this.stream.end();
+	}
+
+	/** Cuts replay-format lines the model wrote as text; returns what was cut. */
+	private stripText(): string {
+		const cuts: string[] = [];
+		this.output.content = this.output.content.flatMap<AssistantMessage["content"][number]>((block) => {
+			if (block.type !== "text") return [block];
+
+			const { kept, cut } = stripReplayLines(block.text);
+			if (cut) cuts.push(cut);
+			if (!cut) return [block];
+
+			block.text = kept;
+			return kept ? [block] : [];
+		});
+		return cuts.join("\n\n");
+	}
+
+	/** A call written as text on a plain stop becomes a real call; the caller runs it like any other. */
+	private salvage(cut: string): boolean {
+		const call = salvageToolCall(cut, this.harnessToolNames);
+		if (!call) return false;
+
+		const toolCall: ToolCall = { type: "toolCall", id: `text-call-${randomUUID()}`, name: call.name, arguments: call.arguments };
+		const contentIndex = this.output.content.length;
+		this.output.content.push(toolCall);
+		this.stream.push({ type: "toolcall_start", contentIndex, partial: this.output });
+		this.stream.push({ type: "toolcall_end", contentIndex, toolCall, partial: this.output });
+		this.output.stopReason = "toolUse";
+		return true;
 	}
 }
 
@@ -423,6 +460,8 @@ class ClaudeProcess implements LiveProcess {
 	private stderr = "";
 	private closed = false;
 	private stopping = false;
+	/** The turn finished with a reply and the process waits, alive, for the learner's next message. */
+	private held = false;
 	private killTimer: NodeJS.Timeout | undefined;
 	private signal: AbortSignal | undefined;
 	private workerOwner: AbortSignal | undefined;
@@ -468,15 +507,36 @@ class ClaudeProcess implements LiveProcess {
 		if (!this.stopping) this.contextProbe.start();
 	}
 
-	canContinue(owner: symbol, sessionId: string | undefined, configuration: unknown, messages: Message[], results: ToolResultMessage[]): boolean {
+	/** Why this process cannot take the request, or null when it can. Never includes message content. */
+	rejectReason(owner: symbol, sessionId: string | undefined, configuration: unknown, messages: Message[], results: ToolResultMessage[]): string | null {
+		if (this.stopping) return "stopping";
+		if (owner !== this.owner) return "owner";
+		if (!sessionId || sessionId !== this.sessionId) return "session";
+		const wanted = configuration as Record<string, unknown> | undefined;
+		const held = this.configuration as Record<string, unknown> | undefined;
+		if (!isDeepStrictEqual(configuration, this.configuration)) {
+			const request = wanted?.request as Record<string, unknown> | undefined;
+			const heldRequest = held?.request as Record<string, unknown> | undefined;
+			for (const key of ["model", "effort", "systemPrompt", "tools"]) {
+				if (!isDeepStrictEqual(request?.[key], heldRequest?.[key])) return `configuration:${key}`;
+			}
+			return "configuration:env";
+		}
 		const conversation = conversationForReuse(messages);
-		return !this.stopping && owner === this.owner && !!sessionId && sessionId === this.sessionId
-			&& isDeepStrictEqual(configuration, this.configuration)
-			&& isDeepStrictEqual(conversation.slice(0, this.conversation.length), this.conversation)
-			&& conversation.length === this.conversation.length + this.admitted.length
-			&& results.length === this.admitted.length
-			&& new Set(results.map((result) => result.toolCallId)).size === results.length
-			&& this.admitted.every((call) => results.some((result) => result.toolCallId === call.id && result.toolName === call.name));
+		if (!isDeepStrictEqual(conversation.slice(0, this.conversation.length), this.conversation)) {
+			const differing = this.conversation.findIndex((message, index) => !isDeepStrictEqual(conversation[index], message));
+			const role = (conversation[differing] as { role?: string } | undefined)?.role ?? "none";
+			return `history (first differing message ${differing}, role ${role})`;
+		}
+		if (this.held) {
+			const added = conversation.slice(this.conversation.length);
+			return added.length > 0 && added.every((message) => (message as { role?: string }).role === "user") ? null : "trailing";
+		}
+		if (conversation.length !== this.conversation.length + this.admitted.length) return "message-count";
+		if (results.length !== this.admitted.length
+			|| new Set(results.map((result) => result.toolCallId)).size !== results.length
+			|| !this.admitted.every((call) => results.some((result) => result.toolCallId === call.id && result.toolName === call.name))) return "results";
+		return null;
 	}
 
 	continueTurn(turn: ClaudeTurn, messages: Message[], results: ToolResultMessage[], signal: AbortSignal | undefined): void {
@@ -497,7 +557,39 @@ class ClaudeProcess implements LiveProcess {
 		this.flushAdmissions();
 	}
 
+	/** The held process takes the learner's new messages as one user line; the model answers them as the next turn. */
+	continueAfterTurn(turn: ClaudeTurn, messages: Message[], signal: AbortSignal | undefined): void {
+		removeLiveProcess(this);
+		const conversation = messages.filter((message) => message.role !== "system");
+		const added = conversation.slice(this.conversation.length);
+		this.held = false;
+		this.conversation = structuredClone(conversationForReuse(messages));
+		this.turn = turn;
+		this.turn.setContextWindow(this.contextWindow);
+		this.sourceCalls = [];
+		this.sourceComplete = false;
+		this.workerOwner = undefined;
+		this.setSignal(signal);
+		if (this.stopping) return;
+		const content = added.flatMap((message) => message.role === "user" ? toUnlabelledBlocks(message.content) : []);
+		this.child.stdin.write(`${toStreamJsonLine(content)}\n`);
+	}
+
+	/** A finished reply keeps the process for the next message, as the newest held one. */
+	private hold(): void {
+		this.held = true;
+		this.toolCallIds = [];
+		this.admitted = [];
+		this.sourceCalls = [];
+		this.sourceComplete = false;
+		this.conversation.push(...structuredClone(conversationForReuse([this.turn.getMessage()])));
+		const replaced = getHeldProcess(this.owner, this.sessionId);
+		if (replaced && replaced !== this) replaced.kill();
+		addLiveProcess(this);
+	}
+
 	kill(): void {
+		this.held = false;
 		this.pendingError = undefined;
 		this.workerOwner = undefined;
 		this.setSignal(undefined);
@@ -606,6 +698,8 @@ class ClaudeProcess implements LiveProcess {
 			}
 			return;
 		}
+		// The CLI's result line for a finished turn can arrive after the process was held.
+		if (this.held && event.type === "resultError") return;
 		// Moving on before held calls were answered means the CLI did not
 		// honor this tool wait. Never execute further stdout-only intentions.
 		if (this.turn.finished) {
@@ -618,7 +712,12 @@ class ClaudeProcess implements LiveProcess {
 		}
 		if (event.type === "messageStart") this.contextProbe?.refresh();
 		this.turn.handle(event);
-		if (this.turn.finished) { this.kill(); return; }
+		if (this.turn.finished) {
+			const { stopReason } = this.turn.getMessage();
+			if (this.sessionId && (stopReason === "stop" || stopReason === "length")) this.hold();
+			else this.kill();
+			return;
+		}
 		if (event.type === "messageStop" && this.turn.waitingForAdmission) {
 			const intents = this.turn.getIntents();
 			// Only rejected bare calls: keep the turn open for the model's retry in its next message.
@@ -656,12 +755,18 @@ function continueLiveProcess(turn: ClaudeTurn, owner: symbol, sessionId: string 
 	const assistant = messages[assistantIndex];
 	if (assistant?.role !== "assistant") return false;
 	const ids = assistant.content.flatMap((block) => block.type === "toolCall" ? [block.id] : []);
+	if (ids.length === 0) return continueHeldProcess(turn, owner, sessionId, configuration, messages, signal);
 	const process = getLiveProcess(ids, owner, sessionId);
-	if (!(process instanceof ClaudeProcess)) return false;
+	if (!(process instanceof ClaudeProcess)) {
+		if (sessionId && ids.length > 0) console.error(`claude CLI reuse rejected: no held process (${countLiveProcesses(owner, sessionId)} held for this session)`);
+		return false;
+	}
 	if (process.consumeFailure(owner, turn)) return true;
 	const trailing = messages.slice(assistantIndex + 1);
 	const results = trailing.filter((message) => message.role === "toolResult");
-	if (trailing.length !== results.length || !process.canContinue(owner, sessionId, configuration, messages, results)) {
+	const reason = trailing.length !== results.length ? "message-count" : process.rejectReason(owner, sessionId, configuration, messages, results);
+	if (reason !== null) {
+		console.error(`claude CLI reuse rejected: ${reason}`);
 		process.kill();
 		return false;
 	}
@@ -669,7 +774,20 @@ function continueLiveProcess(turn: ClaudeTurn, owner: symbol, sessionId: string 
 	return true;
 }
 
-function toClaudeEnv(): NodeJS.ProcessEnv {
+function continueHeldProcess(turn: ClaudeTurn, owner: symbol, sessionId: string | undefined, configuration: unknown, messages: Message[], signal: AbortSignal | undefined): boolean {
+	const process = getHeldProcess(owner, sessionId);
+	if (!(process instanceof ClaudeProcess)) return false;
+	const reason = process.rejectReason(owner, sessionId, configuration, messages, []);
+	if (reason !== null) {
+		console.error(`claude CLI reuse rejected: ${reason}`);
+		process.kill();
+		return false;
+	}
+	process.continueAfterTurn(turn, messages, signal);
+	return true;
+}
+
+function toClaudeEnv():NodeJS.ProcessEnv {
 	// Preserve native CLI auth/routing, including launch-environment credentials.
 	// Claude Code chooses the account and billing method, not LearnHarness.
 	// Loading user settings also loads ~/.claude/CLAUDE.md and memory files;
@@ -693,7 +811,7 @@ async function startProcess(
 	env: NodeJS.ProcessEnv,
 ): Promise<void> {
 	if (options?.signal?.aborted) { turn.fail(ABORT_MESSAGE, "aborted"); return; }
-	const input = toClaudeInput(context.messages);
+	const input = toClaudeCliInput(context.messages);
 	let cliProcess: ClaudeProcess | undefined;
 	const bridge = await createToolBridge(input.tools, {
 		onCall: () => cliProcess?.flushAdmissions(),

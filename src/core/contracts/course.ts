@@ -9,6 +9,19 @@ export interface CourseFile {
 	error?: string;          // only when status is "failed"
 	category?: "material" | "exam" | "reference";
 	categoryBy?: "reader" | "learner";
+	fingerprint?: { size: number; mtimeMs: number; sha256: string };
+	changedOnDisk?: boolean;
+	update?: CourseUpdate;
+}
+
+export interface CourseUpdate {
+	at: string;
+	fromPath: string;
+	previous: Array<{ nodeId: string; pages?: string; method: string }>;
+	nodes?: Array<{ nodeId: string; kind: "same" | "changed" | "new" | "dropped" }>;
+	newSections?: Array<{ title: string; pages: string }>;
+	revisited: string[];
+	planAsked: boolean;
 }
 
 export interface ReferenceSection {
@@ -66,6 +79,7 @@ export interface CourseMaterial {
 export const COURSE_METHOD_CAP = 1_500;
 export const EXAM_PATTERN_CAP = 1_200;
 export const REFERENCE_SECTIONS_CAP = 800;
+export const NEW_SECTIONS_CAP = 15;
 export const ASSIGNABLE_EXTENSIONS = [".pdf", ".md", ".markdown", ".txt", ".tex"] as const;
 
 export function fileCategory(file: CourseFile): "material" | "exam" | "reference" {

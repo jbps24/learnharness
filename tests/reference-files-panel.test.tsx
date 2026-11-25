@@ -364,7 +364,7 @@ describe("ReferenceFilesPanel", () => {
 		const dialog = h.doc.querySelector('[role="dialog"]');
 		assert.ok(dialog, "Expected dialog to open");
 		const text = dialog.textContent ?? "";
-		assert.ok(text.includes("Table of contents: 1 sections (from contents)"));
+		assert.ok(text.includes("Table of contents: 1 section (from contents)"));
 	});
 
 	it("lists unticked reference files greyed out in the Reference group", async () => {

@@ -7,6 +7,7 @@
 - [CourseFile](#coursefile) — supporting declaration
 - [CourseFileStatus](#coursefilestatus) — supporting declaration
 - [CourseMaterial](#coursematerial) — supporting declaration
+- [CourseUpdate](#courseupdate) — supporting declaration
 - [ExamPattern](#exampattern) — supporting declaration
 - [NodeConflict](#nodeconflict) — supporting declaration
 - [NodeMethod](#nodemethod) — supporting declaration
@@ -27,10 +28,17 @@ export interface CourseFile {
     error?: string;
     category?: "material" | "exam" | "reference";
     categoryBy?: "reader" | "learner";
+    fingerprint?: {
+        size: number;
+        mtimeMs: number;
+        sha256: string;
+    };
+    changedOnDisk?: boolean;
+    update?: CourseUpdate;
 }
 ```
 
-**Related types:** [CourseFileStatus](contracts-course.md#coursefilestatus).
+**Related types:** [CourseFileStatus](contracts-course.md#coursefilestatus), [CourseUpdate](contracts-course.md#courseupdate).
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
@@ -42,6 +50,12 @@ export interface CourseFile {
 - [error](#coursefile-error)
 - [category](#coursefile-category)
 - [categoryBy](#coursefile-categoryby)
+- [fingerprint](#coursefile-fingerprint)
+- [fingerprint.size](#coursefile-fingerprintsize)
+- [fingerprint.mtimeMs](#coursefile-fingerprintmtimems)
+- [fingerprint.sha256](#coursefile-fingerprintsha256)
+- [changedOnDisk](#coursefile-changedondisk)
+- [update](#coursefile-update)
 
 ### CourseFile path
 
@@ -89,6 +103,46 @@ category?: "material" | "exam" | "reference";
 
 ```ts
 categoryBy?: "reader" | "learner";
+```
+
+### CourseFile fingerprint
+
+```ts
+fingerprint?: {
+    size: number;
+    mtimeMs: number;
+    sha256: string;
+};
+```
+
+### CourseFile fingerprint.size
+
+```ts
+size: number;
+```
+
+### CourseFile fingerprint.mtimeMs
+
+```ts
+mtimeMs: number;
+```
+
+### CourseFile fingerprint.sha256
+
+```ts
+sha256: string;
+```
+
+### CourseFile changedOnDisk
+
+```ts
+changedOnDisk?: boolean;
+```
+
+### CourseFile update
+
+```ts
+update?: CourseUpdate;
 ```
 
 ## CourseFileStatus
@@ -199,6 +253,94 @@ referencePointers?: Array<{
     path: string;
     sectionIds: string[];
 }>;
+```
+
+## CourseUpdate
+
+Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
+
+```ts
+export interface CourseUpdate {
+    at: string;
+    fromPath: string;
+    previous: Array<{
+        nodeId: string;
+        pages?: string;
+        method: string;
+    }>;
+    nodes?: Array<{
+        nodeId: string;
+        kind: "same" | "changed" | "new" | "dropped";
+    }>;
+    newSections?: Array<{
+        title: string;
+        pages: string;
+    }>;
+    revisited: string[];
+    planAsked: boolean;
+}
+```
+
+**Member index** (including nested object members; inherited members are defined in the linked base types):
+
+- [at](#courseupdate-at)
+- [fromPath](#courseupdate-frompath)
+- [previous](#courseupdate-previous)
+- [nodes](#courseupdate-nodes)
+- [newSections](#courseupdate-newsections)
+- [revisited](#courseupdate-revisited)
+- [planAsked](#courseupdate-planasked)
+
+### CourseUpdate at
+
+```ts
+at: string;
+```
+
+### CourseUpdate fromPath
+
+```ts
+fromPath: string;
+```
+
+### CourseUpdate previous
+
+```ts
+previous: Array<{
+    nodeId: string;
+    pages?: string;
+    method: string;
+}>;
+```
+
+### CourseUpdate nodes
+
+```ts
+nodes?: Array<{
+    nodeId: string;
+    kind: "same" | "changed" | "new" | "dropped";
+}>;
+```
+
+### CourseUpdate newSections
+
+```ts
+newSections?: Array<{
+    title: string;
+    pages: string;
+}>;
+```
+
+### CourseUpdate revisited
+
+```ts
+revisited: string[];
+```
+
+### CourseUpdate planAsked
+
+```ts
+planAsked: boolean;
 ```
 
 ## ExamPattern
