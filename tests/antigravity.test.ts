@@ -17,13 +17,18 @@ const model = ANTIGRAVITY_MODELS[0]!;
 const tool: Tool = { name: "quiz", description: "Ask a quiz", parameters: { type: "object", properties: { question: { type: "string" } }, required: ["question"] } };
 const context = normalizeContext({ systemPrompt: "Teach carefully", tools: [tool], messages: [{ role: "user", content: "Teach addition", timestamp: 0 }] });
 
-function fakeRun(output: object, code = 0) {
+function fakeRun(output: { usage?: unknown; status?: string; error?: string }, code?: number): { run: RunAntigravity; calls: { args: string[]; cwd: string; prompt: string; settings: Record<string, unknown> }[] };
+function fakeRun(output: { usage?: unknown }, code = 0) {
 	const calls: { args: string[]; cwd: string; prompt: string; settings: Record<string, unknown> }[] = [];
 	const run: RunAntigravity = (_binary, args, options) => {
 		assert.equal(statSync(options.cwd).mode & 0o777, 0o700);
 		assert.equal(statSync(options.cwd + "/request.txt").mode & 0o777, 0o600);
 		calls.push({ args, cwd: options.cwd, prompt: readFileSync(options.cwd + "/request.txt", "utf8"), settings: JSON.parse(args[args.indexOf("--settings") + 1]!) });
-		return spawn(process.execPath, ["-e", `process.stdin.resume(); process.stdin.on('end', () => { process.stdout.write(${JSON.stringify(JSON.stringify({ event: "result", result: output }) + "\n")}); process.exitCode=${code}; });`], { stdio: "pipe" });
+		const lines = [
+			...(output.usage ? [JSON.stringify({ event: "step_update", usage: output.usage })] : []),
+			JSON.stringify({ event: "result", result: output }),
+		].join("\n") + "\n";
+		return spawn(process.execPath, ["-e", `process.stdin.resume(); process.stdin.on('end', () => { process.stdout.write(${JSON.stringify(lines)}); process.exitCode=${code}; });`], { stdio: "pipe" });
 	};
 	return { run, calls };
 }

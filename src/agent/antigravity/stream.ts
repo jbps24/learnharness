@@ -7,8 +7,9 @@ import { createAssistantMessageEventStream, type AssistantMessage, type Assistan
 import { externalCliEnv } from "../../core/auth-env.ts";
 import { toClaudeInput } from "../claude-code/transcript.ts";
 import { getAntigravityBinary } from "./binary.ts";
+import { deleteLink, fingerprint, isSafeChatId, readLink, workspaceFor, writeLink } from "./link.ts";
 import { ANTIGRAVITY_MODELS } from "./provider.ts";
-import { AGY_MAX_INPUT_BYTES, antigravityTooLargeMessage, buildAntigravityPrompt } from "./request.ts";
+import { AGY_MAX_INPUT_BYTES, antigravityTooLargeMessage, buildAntigravityPrompt, buildAntigravityResumePrompt } from "./request.ts";
 
 export const AGY_SESSION_SETTINGS = {
 	useG1Credits: false,
@@ -56,6 +57,18 @@ export function inventedTurns(response: unknown): boolean {
 	return typeof response === "string" && /^\[(user|assistant|tool call [^\]\n]+|tool result [^\]\n]+)\]/m.test(response);
 }
 
+/** Chats with a run in flight. A second run for the same chat cannot share the
+ *  chat's workspace or agy conversation, so it replays in full from a temporary
+ *  folder and leaves the link alone. */
+const chatsInFlight = new Set<string>();
+
+type Built = { prompt: string; images: { path: string; data: string }[] };
+
+/** What one agy run reported: its result event, the usage summed over its
+ *  step_update events (result.usage is cumulative over the conversation, so it
+ *  is not used) and the id of the conversation it ran in. */
+type AgyRun = { result: Record<string, unknown>; usage: Record<string, number>; conversationId?: string };
+
 export type RunAntigravity =(binary: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
 
 export function createAntigravityStream(run: RunAntigravity = (binary, args, options) => spawn(binary, args, { ...options, stdio: "pipe" }), findBinary = getAntigravityBinary): StreamFunction<Api, SimpleStreamOptions> {
@@ -67,7 +80,9 @@ export function createAntigravityStream(run: RunAntigravity = (binary, args, opt
 		};
 		void (async () => {
 			let terminal: AssistantMessageEvent | undefined;
-			let cwd: string | undefined;
+			let tempDir: string | undefined;
+			let ownedChat: string | undefined;
+			const staged: string[] = [];
 			let child: ChildProcessWithoutNullStreams | undefined;
 			let killTimer: NodeJS.Timeout | undefined;
 			const abort = () => {
@@ -79,41 +94,70 @@ export function createAntigravityStream(run: RunAntigravity = (binary, args, opt
 				if (options.signal?.aborted) throw new Error("Request was aborted");
 				const binary = findBinary();
 				if (!binary) throw new Error("Antigravity CLI not found. Install agy and sign in with your Google account.");
-				cwd = await mkdtemp(join(tmpdir(), "learnharness-agy-"));
-				await mkdir(join(cwd, ".agents"));
-				// Workspace MCP configuration prevents automatic project server imports.
-				await writeFile(join(cwd, ".agents", "mcp_config.json"), '{"mcpServers":{}}', { mode: 0o600 });
+				// A chat's run uses the chat's fixed workspace, so its agy conversation can be
+				// resumed. Any other run (no or unsafe session id, or a second run for a chat
+				// already running) gets a temporary folder and no link.
+				const chatId = options.sessionId && isSafeChatId(options.sessionId) && !chatsInFlight.has(options.sessionId) ? options.sessionId : undefined;
+				let workdir: string;
+				if (chatId) {
+					chatsInFlight.add(chatId);
+					ownedChat = chatId;
+					workdir = workspaceFor(chatId);
+				} else {
+					workdir = tempDir = await mkdtemp(join(tmpdir(), "learnharness-agy-"));
+					await mkdir(join(workdir, ".agents"));
+					// Workspace MCP configuration prevents automatic project server imports.
+					await writeFile(join(workdir, ".agents", "mcp_config.json"), '{"mcpServers":{}}', { mode: 0o600 });
+				}
 				const input = toClaudeInput(context.messages);
-				const workdir = cwd;
-				const { prompt, images } = buildAntigravityPrompt(input, (index, ext) => join(workdir, `input-${index}.${ext}`));
-				// Backstop: agy would silently cut the newest turns past its cap.
-				const bytes = Buffer.byteLength(prompt);
-				if (bytes > AGY_MAX_INPUT_BYTES) throw new Error(antigravityTooLargeMessage(bytes));
-				for (const image of images) await writeFile(image.path, Buffer.from(image.data, "base64"), { mode: 0o600 });
-				const settings = { ...AGY_SESSION_SETTINGS, permissions: { ...AGY_SESSION_SETTINGS.permissions,
+				const conversation = context.messages.filter((m) => m.role !== "system");
+				const imagePath = (index: number, ext: string) => join(workdir, `input-${index}.${ext}`);
+				// Resume the chat's agy conversation only when it was built from exactly this
+				// model, system prompt, tools and message prefix. The message after the prefix
+				// is agy's own reply, so only what follows it is sent.
+				const link = chatId ? readLink(chatId) : null;
+				const sent = link?.messageCount ?? 0;
+				const resumeFrom = link && link.messageCount !== undefined && link.model === model.id
+					&& conversation[sent]?.role === "assistant" && sent + 1 < conversation.length
+					&& link.fingerprint === fingerprint(input.systemPrompt, input.tools, conversation.slice(0, sent)) ? link : null;
+				const settingsFor = (images: Built["images"]) => ({ ...AGY_SESSION_SETTINGS, permissions: { ...AGY_SESSION_SETTINGS.permissions,
 					deny: [...AGY_SESSION_SETTINGS.permissions.deny, ...(images.length ? [] : ["read_file(*)"])],
-					allow: images.length ? [`read_file(${cwd}/)`] : [],
-				} };
-				const promptFile = join(cwd, "request.txt");
-				await writeFile(promptFile, prompt, { mode: 0o600 });
-				const argsFor = (modelId: string, effort: string | null | undefined) => ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands",
-					"--settings", JSON.stringify(settings), "--json-schema", JSON.stringify(actionSchema(input.tools)), "--print-timeout", "5m",
+					allow: images.length ? [`read_file(${workdir}/)`] : [],
+				} });
+				// Writes the request's images and prompt file; they are removed after the run.
+				const stage = async (built: Built) => {
+					// Backstop: agy would silently cut the newest turns past its cap.
+					const bytes = Buffer.byteLength(built.prompt);
+					if (bytes > AGY_MAX_INPUT_BYTES) throw new Error(antigravityTooLargeMessage(bytes));
+					for (const image of built.images) {
+						staged.push(image.path);
+						await writeFile(image.path, Buffer.from(image.data, "base64"), { mode: 0o600 });
+					}
+					const promptFile = join(workdir, "request.txt");
+					staged.push(promptFile);
+					await writeFile(promptFile, built.prompt, { mode: 0o600 });
+					return built;
+				};
+				const argsFor = (modelId: string, effort: string | null | undefined, images: Built["images"], conversationId?: string) => ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands",
+					"--settings", JSON.stringify(settingsFor(images)), "--json-schema", JSON.stringify(actionSchema(input.tools)), "--print-timeout", "5m",
 					...(modelId === "default" ? [] : ["--model", modelId]),
 					...(effort ? ["--effort", effort] : []),
+					...(conversationId ? ["--conversation", conversationId] : []),
 				];
 				// Pi has already clamped reasoning to this model's supported levels.
-				const args = argsFor(model.id, options.reasoning && model.thinkingLevelMap?.[options.reasoning]);
+				const effort = options.reasoning && model.thinkingLevelMap?.[options.reasoning];
 				const fallbackMap = ANTIGRAVITY_MODELS.find((m) => m.id === ANTIGRAVITY_FALLBACK_MODEL)?.thinkingLevelMap;
 				const fallbackLevel = options.reasoning === "xhigh" || options.reasoning === "max" ? "high" : options.reasoning;
-				const fallbackArgs = argsFor(ANTIGRAVITY_FALLBACK_MODEL, fallbackLevel && fallbackMap?.[fallbackLevel]);
+				const fallbackEffort = fallbackLevel && fallbackMap?.[fallbackLevel];
+				const first = await stage(resumeFrom ? buildAntigravityResumePrompt(conversation.slice(sent + 1), imagePath) : buildAntigravityPrompt(input, imagePath));
 				if (options.signal?.aborted) throw new Error("Request was aborted");
 				const env = externalCliEnv();
 				// Use the CLI's saved account; never select API-key/ADC auth from the app environment.
 				for (const name of ["GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_ADC_AUTH", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_APPLICATION_CREDENTIALS"]) delete env[name];
 				options.signal?.addEventListener("abort", abort, { once: true });
 				stream.push({ type: "start", partial: message });
-				const attempt = (runArgs: string[]) => new Promise<Record<string, unknown>>((resolve, reject) => {
-					child = run(binary, runArgs,{ cwd: workdir, env });
+				const attempt = (runArgs: string[], prompt: string) => new Promise<AgyRun>((resolve, reject) => {
+					child = run(binary, runArgs, { cwd: workdir, env });
 					let stdout = "", stderr = "";
 					child!.stdout.setEncoding("utf8").on("data", (chunk: string) => {
 						stdout += chunk;
@@ -128,28 +172,41 @@ export function createAntigravityStream(run: RunAntigravity = (binary, args, opt
 							const events = stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
 							const result = events.findLast((e) => e.event === "result")?.result as Record<string, unknown> | undefined;
 							if (code !== 0 || !result || result.status !== "SUCCESS") throw new Error(typeof result?.error === "string" ? result.error : stderr || "Antigravity ended without a successful result.");
-							resolve(result);
+							const usage: Record<string, number> = {};
+							for (const e of events) {
+								if (e.event !== "step_update" || !e.usage || typeof e.usage !== "object") continue;
+								for (const [key, value] of Object.entries(e.usage)) if (typeof value === "number" && Number.isFinite(value)) usage[key] = (usage[key] ?? 0) + value;
+							}
+							const init = events.find((e) => e.event === "init");
+							resolve({ result, usage, conversationId: typeof init?.conversation_id === "string" && init.conversation_id ? init.conversation_id : undefined });
 						} catch (error) { reject(error); }
 					});
 					child!.stdin.end(JSON.stringify({ event: "user", message: { content: prompt } }) + "\n");
 				});
 				const unusable = (e: Record<string, unknown>) => e.structured_output == null || inventedTurns(e.response);
-				let envelope = await attempt(args);
+				let final = await attempt(argsFor(model.id, effort, first.images, resumeFrom?.conversationId), first.prompt);
+				const firstRun = final;
 				// A run is unusable for two reasons: Gemini sometimes writes its answer
 				// as prose and never calls agy's finish tool (worst when the prose runs
 				// into the print timeout; agy still reports SUCCESS, just without
 				// structured output), or its prose invents transcript turns ("[user]",
-				// "[tool result ...]"). One retry with the same request goes to the
-				// fallback model, Claude Sonnet 5.5, recorded as the message's model.
-				if (unusable(envelope)) {
+				// "[tool result ...]"). One retry goes to the fallback model, Claude
+				// Sonnet 5.5, recorded as the message's model. It starts a new agy
+				// conversation with the full replay, so the chat's link is dropped first.
+				if (unusable(final.result)) {
+					if (ownedChat) deleteLink(ownedChat);
 					if (options.signal?.aborted) throw new Error("Request was aborted");
-					envelope = await attempt(fallbackArgs);
-					if (unusable(envelope)) throw new Error(ANTIGRAVITY_NO_ANSWER);
+					const replay = await stage(buildAntigravityPrompt(input, imagePath));
+					final = await attempt(argsFor(ANTIGRAVITY_FALLBACK_MODEL, fallbackEffort, replay.images), replay.prompt);
+					if (unusable(final.result)) throw new Error(ANTIGRAVITY_NO_ANSWER);
 					message.model = ANTIGRAVITY_FALLBACK_MODEL;
 				}
-				const actions = parseActions(envelope.structured_output, input.tools);
-				const usage = envelope.usage as Record<string, number> | undefined;
-				const count = (key: string) => Math.max(0, Number.isFinite(usage?.[key]) ? usage![key]! : 0);
+				const actions = parseActions(final.result.structured_output, input.tools);
+				if (ownedChat) {
+					const conversationId = final.conversationId ?? (final === firstRun ? resumeFrom?.conversationId : undefined);
+					if (conversationId) writeLink(ownedChat, { conversationId, fingerprint: fingerprint(input.systemPrompt, input.tools, conversation), model: message.model, messageCount: conversation.length });
+				}
+				const count = (key: string) => Math.max(0, final.usage[key] ?? 0);
 				message.usage.input = Math.max(0, count("input_tokens") - count("cache_read_tokens"));
 				message.usage.output = count("output_tokens");
 				message.usage.cacheRead = count("cache_read_tokens");
@@ -178,7 +235,9 @@ export function createAntigravityStream(run: RunAntigravity = (binary, args, opt
 				options.signal?.removeEventListener("abort", abort);
 				if (killTimer) clearTimeout(killTimer);
 				if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-				if (cwd) await rm(cwd, { recursive: true, force: true }).catch(() => {});
+				if (ownedChat) chatsInFlight.delete(ownedChat);
+				if (tempDir) await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+				for (const file of staged) await rm(file, { force: true }).catch(() => {});
 				if (terminal) stream.push(terminal);
 				stream.end();
 			}

@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Message, Tool } from "@earendil-works/pi-ai";
+import type { ImageContent, Message, TextContent, Tool } from "@earendil-works/pi-ai";
 import { toLlmMessages } from "../../core/native-messages.ts";
 import type { LhMessage } from "../../core/native-messages.ts";
 import { toClaudeInput, type ClaudeInput } from "../claude-code/transcript.ts";
@@ -38,6 +38,36 @@ export function buildAntigravityPrompt(input: ClaudeInput, imagePath: (index: nu
 	}
 	const prompt = [input.systemPrompt, ENGINE_INSTRUCTIONS, `Available harness tools (JSON Schema): ${JSON.stringify(input.tools)}`, "Conversation:", ...replay, AGY_TRANSCRIPT_END].join("\n\n");
 	return { prompt, images };
+}
+
+/** Resumed-turn prompt: only the new trailing messages, labelled and closed with AGY_TRANSCRIPT_END. */
+export function buildAntigravityResumePrompt(trailing: Message[], imagePath: (index: number, ext: string) => string): { prompt: string; images: { path: string; data: string }[] } {
+	const parts: string[] = [];
+	const images: { path: string; data: string }[] = [];
+	const labelled = (label: string, content: string | (TextContent | ImageContent)[]) => {
+		if (typeof content === "string") return parts.push(`${label}\n${content}`);
+		const text = content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
+		parts.push(text ? `${label}\n${text}` : label);
+		for (const block of content) {
+			if (block.type !== "image") continue;
+			const ext = IMAGE_EXTENSIONS[block.mimeType];
+			if (!ext) throw new Error(`Unsupported Antigravity image type: ${block.mimeType}`);
+			const file = imagePath(images.length, ext);
+			images.push({ path: file, data: block.data });
+			parts.push(`[Image: read this file to see the supplied image: ${file}]`);
+		}
+	};
+	for (const message of trailing) {
+		if (message.role === "user") labelled("[user]", message.content);
+		else if (message.role === "toolResult") labelled(message.isError ? `[tool result ${message.toolName} error]` : `[tool result ${message.toolName}]`, message.content);
+		else if (message.role === "assistant") {
+			for (const block of message.content) {
+				if (block.type === "text") parts.push(`[assistant]\n${block.text}`);
+				else if (block.type === "toolCall") parts.push(`[tool call ${block.name}] ${JSON.stringify(block.arguments)}`);
+			}
+		}
+	}
+	return { prompt: [...parts, AGY_TRANSCRIPT_END].join("\n\n"), images };
 }
 
 /** Compaction starts above this projected request size, leaving room under the
