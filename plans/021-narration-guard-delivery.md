@@ -1,6 +1,6 @@
 # 021 — Grading hidden as narration: the guard recovers the content, not just a message
 
-Status: **draft** 2026-11-25. Owner decisions taken; texts and spec-level choices await approval.
+Status: **approved** 2026-11-25.
 
 ## Starting a session on this plan
 
@@ -36,7 +36,7 @@ The turn at 16:20 went straight to `send_to_user` and was graded correctly. Thre
 4. **Prompt rule:** "grading first" in the Claude-only delivery rule. No rule for requests inside answers.
 5. **Units** (the original report: manual unit change, review pass after the last unit): a separate plan later. Out of scope here.
 
-## Texts (to confirm)
+## Texts (**confirmed** 2026-11-25)
 
 - **`narrationBlockReason(narration)`** replaces the constant `NARRATION_BLOCK_REASON`. With non-empty narration:
   > The learner has not seen any of the text you wrote in this response. It was turned into hidden thinking. Your hidden text: «<narration>». Send that content in full through `send_to_user`: the grading of the learner's answer, corrections, and a reply to anything the learner asked. Then pose the question again.
@@ -55,7 +55,7 @@ The turn at 16:20 went straight to `send_to_user` and was graded correctly. Thre
 
 ## Part 1 — Rejection text and grading-first rule
 
-Form: light *(proposed; to confirm with the owner)*
+Form: light
 
 **Files.** `src/agent/narration-guard.ts` (`narrationBlockReason`, narration-text helper, `SEND_TO_USER_DELIVERY_RULE`).
 
@@ -67,7 +67,7 @@ Form: light *(proposed; to confirm with the owner)*
 
 ## Part 2 — Delivery check across messages
 
-Form: full *(proposed)*
+Form: full
 
 **Files.** New `src/core/narration-debt.ts` (length rule, used by guard and view). `src/agent/narration-guard.ts` (`owed` / `deliveredSince` state in `makeNarrationGuard`).
 
@@ -80,7 +80,7 @@ Form: full *(proposed)*
 
 ## Part 3 — Fallback: show owed narration in the view
 
-Form: full *(proposed)*
+Form: full
 
 **Files.** `src/core/view.ts` (a part carrying the owed narration before the question part), the chat component that renders it (`components/…`, the one rendering view parts), `docs/architecture.md` (guard, debt rule, fallback; docs live in this last code part).
 
