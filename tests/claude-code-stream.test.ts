@@ -330,6 +330,9 @@ test('toEffort maps low..max verbatim, minimal to "low", undefined to "medium"',
 });
 
 test("text scenario streams start, text_start, text_delta…, text_end, done(stop)", async (t) => {
+	// Finished turns now hold their process; a short idle limit lets it exit for the cleanup check.
+	liveProcessIdleTimeoutMs.current = 500;
+	t.after(() => (liveProcessIdleTimeoutMs.current = LIVE_PROCESS_IDLE_TIMEOUT_MS));
 	const { events, calls } = await runScenario(t, readFixtureLines("text.jsonl"));
 
 	assert.deepEqual(
@@ -486,6 +489,8 @@ test("a harness tool called by its bare name is left to the CLI, and the prefixe
 	const toolMessage = await runTurn(streamFunction, [HI]);
 
 	assert.deepEqual(toolMessage.content, [{ type: "toolCall", id: retry.id, name: "read", arguments: { path: "a" } }]);
+	liveProcessIdleTimeoutMs.current = 500;
+	t.after(() => (liveProcessIdleTimeoutMs.current = LIVE_PROCESS_IDLE_TIMEOUT_MS));
 	const reply = await runTurn(streamFunction, [HI, toolMessage, toToolResult(retry, "contents of a")]);
 	assert.equal(getText(reply), "contents of a");
 	await assertCleanedUp(getOnlyCall(calls));
@@ -507,6 +512,8 @@ test("a bare harness call beside a prefixed one admits only the prefixed call", 
 	const toolMessage = await runTurn(streamFunction, [HI]);
 
 	assert.deepEqual(toolMessage.content, [{ type: "toolCall", id: prefixed.id, name: "read", arguments: { path: "a" } }]);
+	liveProcessIdleTimeoutMs.current = 500;
+	t.after(() => (liveProcessIdleTimeoutMs.current = LIVE_PROCESS_IDLE_TIMEOUT_MS));
 	const reply = await runTurn(streamFunction, [HI, toolMessage, toToolResult(prefixed, "contents of a")]);
 	assert.equal(getText(reply), "contents of a");
 	await assertCleanedUp(getOnlyCall(calls));
@@ -528,6 +535,8 @@ test("repeated bare-only messages admit only the eventual MCP correction and reu
 	const stream = createClaudeCodeStreamFunction(runClaude);
 	const message = await runTurn(stream, [HI]);
 	assert.deepEqual(message.content, [{ type: "toolCall", ...retry }]);
+	liveProcessIdleTimeoutMs.current = 500;
+	t.after(() => (liveProcessIdleTimeoutMs.current = LIVE_PROCESS_IDLE_TIMEOUT_MS));
 	const reply = await runTurn(stream, [HI, message, toToolResult(retry, "contents of a")]);
 	assert.equal(getText(reply), "contents of a");
 	await assertCleanedUp(getOnlyCall(calls));
@@ -543,6 +552,8 @@ test("a bare call before a prefixed sibling cannot become executable or corrupt 
 	const stream = createClaudeCodeStreamFunction(runClaude);
 	const message = await runTurn(stream, [HI]);
 	assert.deepEqual(message.content, [{ type: "toolCall", ...prefixed }]);
+	liveProcessIdleTimeoutMs.current = 500;
+	t.after(() => (liveProcessIdleTimeoutMs.current = LIVE_PROCESS_IDLE_TIMEOUT_MS));
 	const reply = await runTurn(stream, [HI, message, toToolResult(prefixed, "contents of a")]);
 	assert.equal(getText(reply), "contents of a");
 	await assertCleanedUp(getOnlyCall(calls));
@@ -571,7 +582,7 @@ test("a bare-only rejection may finish with ordinary text instead of an MCP retr
 	const bare: ToolUse = { id: "toolu_bare_then_text", name: "read", arguments: {} };
 	const { events, calls } = await runScenario(t, [
 		...toBareToolUseMessage([bare]), rejectBareCall(bare), ...readFixtureLines("text.jsonl"), HOLD,
-	]);
+	], { sessionId: undefined });
 	const done = getLastEvent(events);
 	assert.ok(done.type === "done");
 	assert.equal(done.reason, "stop");
@@ -804,9 +815,9 @@ test("spawns with the model alias, effort, bridge tools, MCP timeout headroom an
 	assert.equal(getFlagValue(call.args, "--model"), "opus");
 	assert.equal(getFlagValue(call.args, "--effort"), "xhigh");
 	assert.equal(getFlagValue(call.args, "--allowedTools"), "mcp__learnharness__read,mcp__learnharness__get_weather");
-	assert.equal(call.env.MCP_TOOL_TIMEOUT, "1800000");
-	assert.equal(call.env.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT, "1800000");
-	assert.equal(LIVE_PROCESS_IDLE_TIMEOUT_MS, 600000, "learner-wait retention stays at ten minutes");
+	assert.equal(call.env.MCP_TOOL_TIMEOUT, "3600000");
+	assert.equal(call.env.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT, "3600000");
+	assert.equal(LIVE_PROCESS_IDLE_TIMEOUT_MS, 3000000, "learner-wait retention stays at fifty minutes");
 	for (const name of ["MCP_TOOL_TIMEOUT", "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"]) {
 		assert.ok(Number(call.env[name]) > LIVE_PROCESS_IDLE_TIMEOUT_MS, `${name} must outlast LearnHarness retention`);
 	}
@@ -841,6 +852,9 @@ test("a held process remains reusable when the overridden inherited memory switc
 	const message = await runTurn(stream, [HI]);
 	assert.equal(getOnlyCall(calls).env.CLAUDE_CODE_DISABLE_CLAUDE_MDS, "1");
 	process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS = "1";
+	// Finished turns now hold their process; a short idle limit lets it exit for the cleanup check.
+	liveProcessIdleTimeoutMs.current = 500;
+	t.after(() => (liveProcessIdleTimeoutMs.current = LIVE_PROCESS_IDLE_TIMEOUT_MS));
 	const reply = await runTurn(stream, [HI, message, toToolResult(read, "isolated contents")]);
 	assert.equal(getText(reply), "isolated contents");
 	await assertCleanedUp(getOnlyCall(calls));
@@ -859,7 +873,7 @@ test("MCP timeout headroom overrides inherited shorter timeouts", async (t) => {
 
 	const { calls } = await runScenario(t, readFixtureLines("text.jsonl"));
 	const call = getOnlyCall(calls);
-	for (const name of names) assert.equal(call.env[name], "1800000");
+	for (const name of names) assert.equal(call.env[name], "3600000");
 });
 
 test("preserves existing CLI environment authentication without a subscription guarantee", async (t) => {
@@ -958,6 +972,9 @@ test("trailing toolResults matching a live process continue it: held calls answe
 	const streamFunction = createClaudeCodeStreamFunction(runClaude);
 	const toolMessage = await runTurn(streamFunction, [HI]);
 
+	// Finished turns now hold their process; a short idle limit lets it exit for the cleanup check.
+	liveProcessIdleTimeoutMs.current = 500;
+	t.after(() => (liveProcessIdleTimeoutMs.current = LIVE_PROCESS_IDLE_TIMEOUT_MS));
 	const reply = await runTurn(streamFunction, [HI, toolMessage, toToolResult(readA, "contents of a")]);
 
 	assert.equal(toolMessage.stopReason, "toolUse");
@@ -1431,7 +1448,7 @@ test("output after MCP admission fails continuation instead of silently replayin
 });
 
 test("normal completion escalates termination when the child ignores SIGTERM", async (t) => {
-	const { events, calls } = await runScenario(t, [JSON.stringify({ fake: "ignore-term" }), ...readFixtureLines("text.jsonl"), HOLD]);
+	const { events, calls } = await runScenario(t, [JSON.stringify({ fake: "ignore-term" }), ...readFixtureLines("text.jsonl"), HOLD], { sessionId: undefined });
 	assert.equal(getLastEvent(events).type, "done");
 	await assertCleanedUp(getOnlyCall(calls));
 	assert.equal(getOnlyCall(calls).child.signalCode, "SIGKILL");
@@ -1498,7 +1515,8 @@ for (const change of ["model", "effort", "system prompt", "tool schema", "tool d
 		if (change === "authentication environment") assert.equal(freshCall.env.ANTHROPIC_AUTH_TOKEN, "changed-cli-auth");
 		if (change === "routing environment") assert.equal(freshCall.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:1/changed-routing");
 		await assertCleanedUp(getOnlyCall(waiting.calls));
-		await assertCleanedUp(freshCall);
+		assert.equal(freshCall.child.exitCode, null);
+		assert.equal(freshCall.child.signalCode, null);
 	});
 }
 
@@ -1506,6 +1524,9 @@ for (const identicalHistory of [false, true]) test(`one registered stream isolat
 	const call: ToolUse = { id: "toolu_shared_singleton", name: "read", arguments: { path: "same" } };
 	const one = createFakeRun(t, [...toToolUseMessage([call]), callTool(call), REPLY]);
 	const two = createFakeRun(t, [...toToolUseMessage([call]), callTool(call), REPLY]);
+	// Finished turns now hold their process; a short idle limit lets it exit for the cleanup check.
+	liveProcessIdleTimeoutMs.current = 500;
+	t.after(() => (liveProcessIdleTimeoutMs.current = LIVE_PROCESS_IDLE_TIMEOUT_MS));
 	let spawns = 0;
 	const stream = createClaudeCodeStreamFunction((args, options) => {
 		const run = [one, two][spawns++];

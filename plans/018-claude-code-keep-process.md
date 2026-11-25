@@ -86,6 +86,6 @@ Form: full
 
 | Part | Status |
 |---|---|
-| 1 Log why reuse is rejected | not started |
-| 2 Hold processes after finished turns | not started |
-| Build and install | not started |
+| 1 Log why reuse is rejected | green (light), build-review/20261125-113646-018-part-1 |
+| 2 Hold processes after finished turns | green (full), build-review/20261125-114419-018-part-2; 2 rulings (017 text-call tests updated: held process stays alive); open: abort of the last request's signal kills a held process |
+| Build and install | dist built; install after plan 019 (owner) |

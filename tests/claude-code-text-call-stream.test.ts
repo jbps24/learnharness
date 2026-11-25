@@ -200,7 +200,8 @@ for (const bad of [
 		assert.equal(events.some((event) => event.type === "toolcall_start" || event.type === "toolcall_end"), false);
 
 		assert.equal(calls.length, 1);
-		await assertCleanedUp(calls[0]!);
+		assert.equal(calls[0]!.child.exitCode, null);
+		assert.equal(calls[0]!.child.signalCode, null);
 	});
 }
 
@@ -290,7 +291,8 @@ test("mixed turn with real MCP call and text call strips text, keeps only the ad
 	assert.deepEqual(reply.content, [{ type: "text", text: "quiz answered" }]);
 
 	assert.equal(calls.length, 1);
-	await assertCleanedUp(calls[0]!);
+	assert.equal(calls[0]!.child.exitCode, null);
+	assert.equal(calls[0]!.child.signalCode, null);
 });
 
 // plan 017 part 1: an error turn is left as is
@@ -349,7 +351,8 @@ test("stdin line of a replayed turn ends with the CLAUDE_TRANSCRIPT_END block", 
 	assert.deepEqual(userInput.message.content.at(-1), { type: "text", text: CLAUDE_TRANSCRIPT_END });
 
 	assert.equal(calls.length, 1);
-	await assertCleanedUp(calls[0]!);
+	assert.equal(calls[0]!.child.exitCode, null);
+	assert.equal(calls[0]!.child.signalCode, null);
 });
 
 test("max_tokens turn with a text tool call keeps stopReason length and does not salvage", async (t) => {
@@ -375,5 +378,6 @@ test("max_tokens turn with a text tool call keeps stopReason length and does not
 	assert.equal(events.some((event) => event.type === "toolcall_start" || event.type === "toolcall_end"), false);
 
 	assert.equal(calls.length, 1);
-	await assertCleanedUp(calls[0]!);
+	assert.equal(calls[0]!.child.exitCode, null);
+	assert.equal(calls[0]!.child.signalCode, null);
 });

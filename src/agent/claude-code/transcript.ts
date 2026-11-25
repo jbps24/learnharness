@@ -78,7 +78,7 @@ function toContentBlocks(parts: ReplayPart[]): ClaudeContentBlock[] {
 	return blocks;
 }
 
-function toUnlabelledBlocks(content: string | (TextContent | ImageContent)[]): ClaudeContentBlock[] {
+export function toUnlabelledBlocks(content: string | (TextContent | ImageContent)[]): ClaudeContentBlock[] {
 	if (typeof content === "string") return [{ type: "text", text: content }];
 
 	return content.map((block) => (block.type === "text" ? { type: "text", text: block.text } : toImageBlock(block)));

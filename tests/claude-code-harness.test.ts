@@ -203,7 +203,8 @@ test("switching off blocks future requests but does not interrupt an already adm
 	child.send("continue"); await finished;
 	assert(getLastAssistantText(chatId).length > 0, "the admitted turn completes normally");
 	assert.equal(readSettings()?.claudeCode?.enabled, false);
-	await waitForExit(child);
+	assert.equal(child.exitCode, null);
+	assert.equal(child.signalCode, null);
 });
 
 test("a question answered before the idle timeout continues the waiting CLI process with the answer", async (t) => {
@@ -226,7 +227,8 @@ test("a question answered before the idle timeout continues the waiting CLI proc
 	assert.deepEqual(cliContextWindowOf(chatStore.getChat(chatId)!.messages), { model: "claude-code:sonnet", tokens: 200000 });
 	assert.deepEqual(cliContextWindowOf(JSON.parse(readFileSync(join(PATHS.chats, `${chatId}.json`), "utf8")).messages), { model: "claude-code:sonnet", tokens: 200000 });
 	assert.ok(getLastAssistantText(chatId).includes(ANSWER_TEXT), getLastAssistantText(chatId));
-	await waitForExit(waiting);
+	assert.equal(waiting.exitCode, null);
+	assert.equal(waiting.signalCode, null);
 });
 
 test("a question pauses later calls from the same CLI response until the learner answers", async (t) => {
@@ -254,7 +256,8 @@ test("a question pauses later calls from the same CLI response until the learner
 	assert.equal(fakeRun.children.length, 1);
 	assert.ok(getLastAssistantText(chatId).includes(ANSWER_TEXT));
 	assert.ok(getLastAssistantText(chatId).includes("HTTP next"));
-	await waitForExit(fakeRun.children[0]!);
+	assert.equal(fakeRun.children[0]!.exitCode, null);
+	assert.equal(fakeRun.children[0]!.signalCode, null);
 });
 
 test("an individually cancelled MCP question queued behind a learner wait never executes", async (t) => {
@@ -288,7 +291,8 @@ test("an individually cancelled MCP question queued behind a learner wait never 
 	assert.equal(danglingQuestionOf(chatStore.getChat(chatId)?.messages ?? []), null);
 	assert.equal(JSON.stringify(chatStore.getChat(chatId)?.messages).includes(cancelledId), false, "cancelled B must never reach native tool execution or persistence");
 	assert.ok(getLastAssistantText(chatId).includes(ANSWER_TEXT));
-	await waitForExit(child);
+	assert.equal(child.exitCode, null);
+	assert.equal(child.signalCode, null);
 });
 
 test("a question answered after the idle timeout starts a fresh CLI process that replays the question and answer", async (t) => {

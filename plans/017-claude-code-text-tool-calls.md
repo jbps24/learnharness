@@ -67,4 +67,4 @@ Form: full
 | Part | Status |
 |---|---|
 | 1 Strip, salvage and close the replay | green (full), build-review/20261125-111014-017-part-1; open: text deltas stream replay lines live before `done` (only final content is cleaned) |
-| Build and install | not started |
+| Build and install | dist built; install after plan 019 (owner) |
