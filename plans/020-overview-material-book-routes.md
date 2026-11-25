@@ -137,4 +137,4 @@ Desktop app (`ELECTRON_RUN_AS_NODE` unset):
 | 3 Book routes | green (full), build-review/20261125-145447-020-part-3; one `npm test` hung 300 s and was killed |
 | 4 Tutor notes, prompt, practice | green (full), build-review/20261125-154247-020-part-4 |
 | 5 UI and docs | green (light), build-review/20261125-161755-020-part-5; open: 'Reading the book…' also shows for a pointed node that is not due (no queued/running signal) |
-| Build and install | not started |
+| Build and install | installed 2026-11-25 17:02 |
