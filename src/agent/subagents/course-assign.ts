@@ -12,6 +12,8 @@ import {
 	type CourseAssignWorker,
 	type CourseAssignWorkerInput,
 	type CourseAssignWorkerResult,
+	type CourseLabelWorker,
+	parseMaterialKind,
 } from "../../core/course-assign.ts";
 import { buildReferenceMapperPrompt, parseReferencePointers, REFERENCE_MAPPER_INSTRUCTIONS } from "../../core/reference-pointers.ts";
 import type { PiEngine } from "../models.ts";
@@ -186,6 +188,42 @@ async function runPointerMapper(
 	} finally {
 		requests.close();
 	}
+}
+
+/** The label-only task (plan 020 part 2, owner-confirmed): the reader checks how complete a file is. */
+export const COURSE_LABEL_TASK = `Decide only how complete this course file is; do not read it against a plan. Look at its size and at a few pages spread through the file. **complete**: it works the course's derivations and procedures through step by step, as a script, lecture notes or a transcript of the lecture (Mitschrift) do. **overview**: it shows what the course covers, its results and formulas, but mostly not the steps between them, as lecture slides usually do. Return ONE JSON object and nothing else: {"materialKind":"complete"|"overview"}.`;
+
+export function createCourseLabelWorker(options: CourseAssignWorkerOptions): CourseLabelWorker {
+	return async (input) => {
+		const engine = options.engineFor();
+		if (!engine) return { ok: false, error: "No model is configured for reading course files." };
+		const isPdf = input.path.toLowerCase().endsWith(".pdf");
+		const prompt = `Course file: ${input.path}\n\nRead the file as the task says, then return the JSON object.`;
+		const run = async (extra: string): Promise<string | { failure: string }> => {
+			const task = extra ? `${prompt}\n\n${extra}` : prompt;
+			if (isPdf) {
+				const result = await runPdfReaderAgent(
+					{ path: input.path, question: task },
+					{ engine, abortSignal: input.abortSignal, chatId: input.chatId, instructionsSuffix: COURSE_LABEL_TASK },
+				);
+				if (/^PDF failed:/i.test(result.brief)) return { failure: result.brief.replace(/^PDF failed:\s*/i, "") };
+				return jsonCandidate(result.brief);
+			}
+			return jsonCandidate(await runTextAssignment(engine, input.path, task, input.abortSignal, COURSE_LABEL_TASK));
+		};
+
+		let problems: string[] = [];
+		let extra = "";
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const answer = await run(extra);
+			if (typeof answer !== "string") return { ok: false, error: answer.failure };
+			const parsed = parseMaterialKind(answer);
+			if (parsed.ok) return { ok: true, materialKind: parsed.materialKind };
+			problems = parsed.problems;
+			extra = `Your previous answer had these problems:\n${problems.map((p) => `- ${p}`).join("\n")}\nReturn the corrected JSON object.`;
+		}
+		return { ok: false, error: problems.join("; ") || "Labelling failed." };
+	};
 }
 
 export function createCourseAssignWorker(options: CourseAssignWorkerOptions): CourseAssignWorker {

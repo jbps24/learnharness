@@ -94,6 +94,18 @@ _Avoid_: Textbook file, background file
 The sections of a reference file that cover one plan node.
 _Avoid_: Bookmark, citation
 
+**Complete material**:
+A course material file that carries both what is taught and how (Skript, Mitschrift). The default label.
+_Avoid_: Script
+
+**Overview material**:
+A course material file that carries what is taught but not how (slides). The reference file supplies the how.
+_Avoid_: Slides file
+
+**Book route**:
+What one plan node's pointed reference sections add to its slide route: the derivation and the steps in between, in the slides' notation. Read once and stored.
+_Avoid_: Book method, book summary
+
 **Course-method note**:
 The wire-only note that tells the tutor the course methods for a node (or the unresolved conflict). It is sent again when the node's methods change or a lesson-record cut drops it.
 _Avoid_: Method hint

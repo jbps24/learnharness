@@ -4,6 +4,7 @@
 
 [API index](README.md) · [Data access and host boundaries](../plugin-authoring.md#backend-and-data)
 
+- [BookRoute](#bookroute) — supporting declaration
 - [CourseFile](#coursefile) — supporting declaration
 - [CourseFileStatus](#coursefilestatus) — supporting declaration
 - [CourseMaterial](#coursematerial) — supporting declaration
@@ -13,6 +14,66 @@
 - [NodeMethod](#nodemethod) — supporting declaration
 - [PropositionMethod](#propositionmethod) — supporting declaration
 - [ReferenceSection](#referencesection) — supporting declaration
+
+## BookRoute
+
+Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
+
+```ts
+export interface BookRoute {
+    nodeId: string;
+    path: string;
+    sectionIds: string[];
+    pages: string;
+    method: string;
+    error?: string;
+}
+```
+
+**Member index** (including nested object members; inherited members are defined in the linked base types):
+
+- [nodeId](#bookroute-nodeid)
+- [path](#bookroute-path)
+- [sectionIds](#bookroute-sectionids)
+- [pages](#bookroute-pages)
+- [method](#bookroute-method)
+- [error](#bookroute-error)
+
+### BookRoute nodeId
+
+```ts
+nodeId: string;
+```
+
+### BookRoute path
+
+```ts
+path: string;
+```
+
+### BookRoute sectionIds
+
+```ts
+sectionIds: string[];
+```
+
+### BookRoute pages
+
+```ts
+pages: string;
+```
+
+### BookRoute method
+
+```ts
+method: string;
+```
+
+### BookRoute error
+
+```ts
+error?: string;
+```
 
 ## CourseFile
 
@@ -28,6 +89,8 @@ export interface CourseFile {
     error?: string;
     category?: "material" | "exam" | "reference";
     categoryBy?: "reader" | "learner";
+    materialKind?: "complete" | "overview";
+    materialKindBy?: "reader" | "learner";
     fingerprint?: {
         size: number;
         mtimeMs: number;
@@ -50,6 +113,8 @@ export interface CourseFile {
 - [error](#coursefile-error)
 - [category](#coursefile-category)
 - [categoryBy](#coursefile-categoryby)
+- [materialKind](#coursefile-materialkind)
+- [materialKindBy](#coursefile-materialkindby)
 - [fingerprint](#coursefile-fingerprint)
 - [fingerprint.size](#coursefile-fingerprintsize)
 - [fingerprint.mtimeMs](#coursefile-fingerprintmtimems)
@@ -103,6 +168,18 @@ category?: "material" | "exam" | "reference";
 
 ```ts
 categoryBy?: "reader" | "learner";
+```
+
+### CourseFile materialKind
+
+```ts
+materialKind?: "complete" | "overview";
+```
+
+### CourseFile materialKindBy
+
+```ts
+materialKindBy?: "reader" | "learner";
 ```
 
 ### CourseFile fingerprint
@@ -178,10 +255,11 @@ export interface CourseMaterial {
         path: string;
         sectionIds: string[];
     }>;
+    bookRoutes?: BookRoute[];
 }
 ```
 
-**Related types:** [CourseFile](contracts-course.md#coursefile), [ExamPattern](contracts-course.md#exampattern), [NodeConflict](contracts-course.md#nodeconflict), [NodeMethod](contracts-course.md#nodemethod), [PropositionMethod](contracts-course.md#propositionmethod), [ReferenceSection](contracts-course.md#referencesection).
+**Related types:** [BookRoute](contracts-course.md#bookroute), [CourseFile](contracts-course.md#coursefile), [ExamPattern](contracts-course.md#exampattern), [NodeConflict](contracts-course.md#nodeconflict), [NodeMethod](contracts-course.md#nodemethod), [PropositionMethod](contracts-course.md#propositionmethod), [ReferenceSection](contracts-course.md#referencesection).
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
@@ -193,6 +271,7 @@ export interface CourseMaterial {
 - [propositionExamPatterns](#coursematerial-propositionexampatterns)
 - [referenceIndex](#coursematerial-referenceindex)
 - [referencePointers](#coursematerial-referencepointers)
+- [bookRoutes](#coursematerial-bookroutes)
 
 ### CourseMaterial files
 
@@ -253,6 +332,12 @@ referencePointers?: Array<{
     path: string;
     sectionIds: string[];
 }>;
+```
+
+### CourseMaterial bookRoutes
+
+```ts
+bookRoutes?: BookRoute[];
 ```
 
 ## CourseUpdate
@@ -492,6 +577,7 @@ export interface PropositionMethod {
     propositionId: string;
     lessonId: string;
     nodeId: string;
+    role?: "book";
     path: string;
     pages?: string;
     method: string;
@@ -503,6 +589,7 @@ export interface PropositionMethod {
 - [propositionId](#propositionmethod-propositionid)
 - [lessonId](#propositionmethod-lessonid)
 - [nodeId](#propositionmethod-nodeid)
+- [role](#propositionmethod-role)
 - [path](#propositionmethod-path)
 - [pages](#propositionmethod-pages)
 - [method](#propositionmethod-method)
@@ -523,6 +610,12 @@ lessonId: string;
 
 ```ts
 nodeId: string;
+```
+
+### PropositionMethod role
+
+```ts
+role?: "book";
 ```
 
 ### PropositionMethod path

@@ -31,7 +31,7 @@ function patchRequest(id: string, body: unknown): Request {
 }
 
 const EXPECTED_400_MESSAGE =
-	"Expected { path: string, binding: boolean }, { path: string, category: \"material\" | \"exam\" | \"reference\" } or { path: string, retry: true }";
+	'Expected { path: string, binding: boolean }, { path: string, category: "material" | "exam" | "reference" }, { path: string, materialKind: "complete" | "overview" } or { path: string, retry: true }';
 
 describe("course retry route", () => {
 	// plan 013 part 1: retry of a failed ticked file sets status to pending, removes error, keeps other fields and stored data unchanged, emits course-material-changed, and returns 200 { ok: true }

@@ -53,10 +53,11 @@ describe("buildAssignmentPrompt", () => {
 describe("parseAssignment", () => {
 	const TARGETS = ["n1", "n2", "n3"];
 
-	// plan 007 part 3: valid result for two of three target nodes succeeds and omits uncovered node
+	// plan 007 part 3, plan 020 part 2: valid result for two of three target nodes succeeds and omits uncovered node
 	it("parses a valid result covering two of three target nodes", () => {
 		const raw = JSON.stringify({
 			category: "material",
+			materialKind: "complete",
 			nodes: [
 				{ nodeId: "n1", pages: "S. 20–27", method: "Step 1, then step 2.", sameRouteAsExisting: null },
 				{ nodeId: "n3", pages: "S. 30", method: "Use table 4.", sameRouteAsExisting: true },
@@ -67,6 +68,7 @@ describe("parseAssignment", () => {
 			ok: true,
 			value: {
 				category: "material",
+				materialKind: "complete",
 				nodes: [
 					{ nodeId: "n1", pages: "S. 20–27", method: "Step 1, then step 2.", sameRouteAsExisting: null },
 					{ nodeId: "n3", pages: "S. 30", method: "Use table 4.", sameRouteAsExisting: true },
@@ -75,10 +77,10 @@ describe("parseAssignment", () => {
 		});
 	});
 
-	// plan 007 part 3: empty nodes array is valid when file covers none of the target nodes
+	// plan 007 part 3, plan 020 part 2: empty nodes array is valid when file covers none of the target nodes
 	it("accepts an empty nodes array when no target nodes are covered", () => {
-		const parsed = parseAssignment(JSON.stringify({ category: "material", nodes: [] }), TARGETS);
-		assert.deepEqual(parsed, { ok: true, value: { category: "material", nodes: [] } });
+		const parsed = parseAssignment(JSON.stringify({ category: "material", materialKind: "complete", nodes: [] }), TARGETS);
+		assert.deepEqual(parsed, { ok: true, value: { category: "material", materialKind: "complete", nodes: [] } });
 	});
 
 	// plan 007 part 3: non-JSON or non-object top-level output returns a problem
@@ -92,10 +94,11 @@ describe("parseAssignment", () => {
 		assert.ok(arrayTop.problems.length > 0);
 	});
 
-	// plan 007 part 3: unknown node id is collected as a problem
+	// plan 007 part 3, plan 020 part 2: unknown node id is collected as a problem
 	it("rejects an unknown node id", () => {
 		const raw = JSON.stringify({
 			category: "material",
+			materialKind: "complete",
 			nodes: [{ nodeId: "unknown-id", pages: "p. 1", method: "Some method.", sameRouteAsExisting: null }],
 		});
 		const parsed = parseAssignment(raw, TARGETS);
@@ -103,10 +106,11 @@ describe("parseAssignment", () => {
 		assert.ok(parsed.problems.some((p) => p.includes("unknown-id")));
 	});
 
-	// plan 007 part 3: duplicate node id is collected as a problem
+	// plan 007 part 3, plan 020 part 2: duplicate node id is collected as a problem
 	it("rejects duplicate node ids", () => {
 		const raw = JSON.stringify({
 			category: "material",
+			materialKind: "complete",
 			nodes: [
 				{ nodeId: "n1", pages: "p. 1", method: "First.", sameRouteAsExisting: null },
 				{ nodeId: "n1", pages: "p. 2", method: "Second.", sameRouteAsExisting: null },
@@ -117,10 +121,11 @@ describe("parseAssignment", () => {
 		assert.ok(parsed.problems.some((p) => p.includes("n1")));
 	});
 
-	// plan 007 part 3: empty or whitespace-only method is collected as a problem
+	// plan 007 part 3, plan 020 part 2: empty or whitespace-only method is collected as a problem
 	it("rejects an empty or whitespace-only method", () => {
 		const raw = JSON.stringify({
 			category: "material",
+			materialKind: "complete",
 			nodes: [{ nodeId: "n1", pages: "p. 1", method: "   ", sameRouteAsExisting: null }],
 		});
 		const parsed = parseAssignment(raw, TARGETS);
@@ -128,29 +133,30 @@ describe("parseAssignment", () => {
 		assert.ok(parsed.problems.length > 0);
 	});
 
-	// plan 007 part 3: method at COURSE_METHOD_CAP (1,500 chars) is valid; 1,501 chars is a problem
+	// plan 007 part 3, plan 020 part 2: method at COURSE_METHOD_CAP (1,500 chars) is valid; 1,501 chars is a problem
 	it("accepts a method at COURSE_METHOD_CAP and rejects one over the cap", () => {
 		const atCap = "x".repeat(COURSE_METHOD_CAP);
 		const ok = parseAssignment(
-			JSON.stringify({ category: "material", nodes: [{ nodeId: "n1", pages: "p. 1", method: atCap, sameRouteAsExisting: null }] }),
+			JSON.stringify({ category: "material", materialKind: "complete", nodes: [{ nodeId: "n1", pages: "p. 1", method: atCap, sameRouteAsExisting: null }] }),
 			TARGETS,
 		);
 		assert.equal(ok.ok, true);
 
 		const overCap = "x".repeat(COURSE_METHOD_CAP + 1);
 		const bad = parseAssignment(
-			JSON.stringify({ category: "material", nodes: [{ nodeId: "n1", pages: "p. 1", method: overCap, sameRouteAsExisting: null }] }),
+			JSON.stringify({ category: "material", materialKind: "complete", nodes: [{ nodeId: "n1", pages: "p. 1", method: overCap, sameRouteAsExisting: null }] }),
 			TARGETS,
 		);
 		assert.equal(bad.ok, false);
 		assert.ok(bad.problems.some((p) => p.includes("n1")));
 	});
 
-	// plan 007 part 3: sameRouteAsExisting must be boolean or null
+	// plan 007 part 3, plan 020 part 2: sameRouteAsExisting must be boolean or null
 	it("rejects sameRouteAsExisting that is not boolean or null", () => {
 		for (const invalid of ["true", 1, {}, undefined]) {
 			const raw = JSON.stringify({
 				category: "material",
+				materialKind: "complete",
 				nodes: [{ nodeId: "n1", pages: "p. 1", method: "Valid.", ...(invalid !== undefined ? { sameRouteAsExisting: invalid } : {}) }],
 			});
 			const parsed = parseAssignment(raw, TARGETS);
@@ -159,10 +165,11 @@ describe("parseAssignment", () => {
 		}
 	});
 
-	// plan 007 part 3: multiple problems across entries are all collected
+	// plan 007 part 3, plan 020 part 2: multiple problems across entries are all collected
 	it("collects all problems across entries", () => {
 		const raw = JSON.stringify({
 			category: "material",
+			materialKind: "complete",
 			nodes: [
 				{ nodeId: "bogus", pages: "p. 1", method: "", sameRouteAsExisting: "yes" },
 				{ nodeId: "n2", pages: "p. 2", method: "x".repeat(COURSE_METHOD_CAP + 1), sameRouteAsExisting: false },
@@ -203,10 +210,11 @@ describe("parseAssignment", () => {
 		assert.ok(parsed.problems.length > 0);
 	});
 
-	// plan 015 part 2: parseAssignment accepts sameAsPreviousVersion (boolean | null) and newSections in replace mode
+	// plan 015 part 2, plan 020 part 2: parseAssignment accepts sameAsPreviousVersion (boolean | null) and newSections in replace mode
 	it("accepts sameAsPreviousVersion and newSections in replace mode", () => {
 		const raw = JSON.stringify({
 			category: "material",
+			materialKind: "complete",
 			nodes: [
 				{ nodeId: "n1", pages: "S. 1", method: "Same route.", sameRouteAsExisting: null, sameAsPreviousVersion: true },
 				{ nodeId: "n2", pages: "S. 2", method: "Changed route.", sameRouteAsExisting: null, sameAsPreviousVersion: false },
@@ -219,6 +227,7 @@ describe("parseAssignment", () => {
 			ok: true,
 			value: {
 				category: "material",
+				materialKind: "complete",
 				nodes: [
 					{ nodeId: "n1", pages: "S. 1", method: "Same route.", sameRouteAsExisting: null, sameAsPreviousVersion: true },
 					{ nodeId: "n2", pages: "S. 2", method: "Changed route.", sameRouteAsExisting: null, sameAsPreviousVersion: false },
@@ -229,20 +238,20 @@ describe("parseAssignment", () => {
 		});
 	});
 
-	// plan 015 part 2: newSections allows up to NEW_SECTIONS_CAP (15) entries and rejects 16
+	// plan 015 part 2, plan 020 part 2: newSections allows up to NEW_SECTIONS_CAP (15) entries and rejects 16
 	it("accepts newSections at NEW_SECTIONS_CAP and rejects one over the cap", () => {
 		const makeSections = (count: number) =>
 			Array.from({ length: count }, (_, i) => ({ title: `Section ${i + 1}`, pages: `p. ${i + 1}` }));
 
 		const ok = parseAssignment(
-			JSON.stringify({ category: "material", nodes: [], newSections: makeSections(NEW_SECTIONS_CAP) }),
+			JSON.stringify({ category: "material", materialKind: "complete", nodes: [], newSections: makeSections(NEW_SECTIONS_CAP) }),
 			TARGETS,
 			{ replace: true },
 		);
 		assert.equal(ok.ok, true);
 
 		const bad = parseAssignment(
-			JSON.stringify({ category: "material", nodes: [], newSections: makeSections(NEW_SECTIONS_CAP + 1) }),
+			JSON.stringify({ category: "material", materialKind: "complete", nodes: [], newSections: makeSections(NEW_SECTIONS_CAP + 1) }),
 			TARGETS,
 			{ replace: true },
 		);
@@ -250,7 +259,7 @@ describe("parseAssignment", () => {
 		assert.ok(bad.problems.length > 0);
 	});
 
-	// plan 015 part 2: newSections entries require non-empty title and pages
+	// plan 015 part 2, plan 020 part 2: newSections entries require non-empty title and pages
 	it("rejects newSections entries with empty or whitespace-only title or pages", () => {
 		for (const badSection of [
 			{ title: "   ", pages: "p. 1" },
@@ -258,7 +267,7 @@ describe("parseAssignment", () => {
 			{ title: "", pages: "" },
 		]) {
 			const parsed = parseAssignment(
-				JSON.stringify({ category: "material", nodes: [], newSections: [badSection] }),
+				JSON.stringify({ category: "material", materialKind: "complete", nodes: [], newSections: [badSection] }),
 				TARGETS,
 				{ replace: true },
 			);
@@ -267,7 +276,7 @@ describe("parseAssignment", () => {
 		}
 	});
 
-	// plan 015 part 2: sameAsPreviousVersion must be boolean or null in replace mode
+	// plan 015 part 2, plan 020 part 2: sameAsPreviousVersion must be boolean or null in replace mode
 	it("rejects missing or invalid sameAsPreviousVersion in replace mode", () => {
 		for (const invalid of ["true", 1, {}, undefined]) {
 			const node: Record<string, unknown> = {
@@ -278,7 +287,7 @@ describe("parseAssignment", () => {
 			};
 			if (invalid !== undefined) node.sameAsPreviousVersion = invalid;
 			const parsed = parseAssignment(
-				JSON.stringify({ category: "material", nodes: [node], newSections: [] }),
+				JSON.stringify({ category: "material", materialKind: "complete", nodes: [node], newSections: [] }),
 				TARGETS,
 				{ replace: true },
 			);
@@ -287,11 +296,12 @@ describe("parseAssignment", () => {
 		}
 	});
 
-	// plan 015 part 2: sameAsPreviousVersion and newSections are accepted in replace mode only
+	// plan 015 part 2, plan 020 part 2: sameAsPreviousVersion and newSections are accepted in replace mode only
 	it("rejects sameAsPreviousVersion and newSections outside replace mode", () => {
 		const withSame = parseAssignment(
 			JSON.stringify({
 				category: "material",
+				materialKind: "complete",
 				nodes: [{ nodeId: "n1", pages: "p. 1", method: "Valid.", sameRouteAsExisting: null, sameAsPreviousVersion: true }],
 			}),
 			TARGETS,
@@ -301,6 +311,7 @@ describe("parseAssignment", () => {
 		const withSections = parseAssignment(
 			JSON.stringify({
 				category: "material",
+				materialKind: "complete",
 				nodes: [],
 				newSections: [{ title: "Extra", pages: "p. 10" }],
 			}),
@@ -321,10 +332,11 @@ describe("applyAssignment", () => {
 		};
 	}
 
-	// plan 007 part 3: valid result for two of three targets stores two methods and sets file status to assigned
+	// plan 007 part 3, plan 020 part 2: valid result for two of three targets stores two methods and sets file status to assigned
 	it("stores methods for covered nodes and sets file status to assigned", () => {
 		const next = applyAssignment(baseMaterial(), "/course/a.pdf", {
 			category: "material",
+			materialKind: "complete",
 			nodes: [
 				{ nodeId: "n1", pages: "S. 20–27", method: "Method 1", sameRouteAsExisting: null },
 				{ nodeId: "n2", pages: "S. 28", method: "Method 2", sameRouteAsExisting: null },
@@ -355,7 +367,7 @@ describe("applyAssignment", () => {
 		const next = applyAssignment(
 			initial,
 			"/course/a.pdf",
-			{ category: "material", nodes: [{ nodeId: "n1", pages: "p. 10", method: "New A on n1", sameRouteAsExisting: true }] },
+			{ category: "material", materialKind: "complete", nodes: [{ nodeId: "n1", pages: "p. 10", method: "New A on n1", sameRouteAsExisting: true }] },
 			["n1"],
 		);
 		assert.deepEqual(next.methods, [
@@ -377,6 +389,7 @@ describe("applyAssignment", () => {
 		};
 		const next = applyAssignment(initial, "/course/b.pdf", {
 			category: "material",
+			materialKind: "complete",
 			nodes: [{ nodeId: "n1", pages: "p. 3", method: "Route B", sameRouteAsExisting: false }],
 		});
 		assert.deepEqual(next.conflicts, [
@@ -400,6 +413,7 @@ describe("applyAssignment", () => {
 		};
 		const next = applyAssignment(initial, "/course/c.pdf", {
 			category: "material",
+			materialKind: "complete",
 			nodes: [{ nodeId: "n1", pages: "p. 4", method: "Route C", sameRouteAsExisting: false }],
 		});
 		assert.deepEqual(next.conflicts, [
@@ -421,7 +435,7 @@ describe("applyAssignment", () => {
 		const next = applyAssignment(
 			initial,
 			"/course/a.pdf",
-			{ category: "material", nodes: [{ nodeId: "n1", pages: "p. 9", method: "New n1", sameRouteAsExisting: null }] },
+			{ category: "material", materialKind: "complete", nodes: [{ nodeId: "n1", pages: "p. 9", method: "New n1", sameRouteAsExisting: null }] },
 			["n1", "n2"],
 		);
 		assert.deepEqual(
@@ -445,8 +459,9 @@ describe("applyAssignment", () => {
 				],
 				conflicts: [{ nodeId: "n1", paths: ["/course/a.pdf", "/course/b.pdf"] }],
 			};
-			const next = applyAssignment(initial, "/course/c.pdf", {
+			const next = applyAssignment(initial, "/course-assign/c.pdf".replace("course-assign", "course"), {
 				category: "material",
+				materialKind: "complete",
 				nodes: [{ nodeId: "n1", pages: "p. 2", method: "Same route", sameRouteAsExisting: same }],
 			});
 			assert.deepEqual(next.conflicts, [{ nodeId: "n1", paths: ["/course/a.pdf", "/course/b.pdf"] }]);
@@ -469,7 +484,7 @@ describe("applyAssignment", () => {
 			methods: [],
 			conflicts: [],
 		};
-		const next = applyAssignment(initial, "/course/a.pdf", { category: "material", nodes: [] });
+		const next = applyAssignment(initial, "/course/a.pdf", { category: "material", materialKind: "complete", nodes: [] });
 		assert.equal(next.files[0]?.status, "assigned");
 		assert.equal(next.files[0]?.error, undefined);
 	});

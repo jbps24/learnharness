@@ -414,19 +414,20 @@ export function newUnitsNoteMessage(): LhMarkerMessage {
 	};
 }
 
-export function newCourseFilesNoteMessage(paths: string[]): LhMarkerMessage {
+export function newCourseFilesNoteMessage(paths: string[], overview: ReadonlySet<string> = new Set()): LhMarkerMessage {
+	const overviewPaths = paths.filter((p) => overview.has(p));
 	return {
 		id: newMessageId(),
 		role: "custom",
 		customType: "course-files",
 		content: [
 			"[Course material] This lesson's course files (their methods are binding):",
-			...paths.map((p) => `- ${p}`),
+			...paths.map((p) => `- ${p}${overview.has(p) ? " (overview)" : ""}`),
 			"",
 			"Files the learner switched off are not listed and no longer bind.",
 		].join("\n"),
 		display: false,
-		details: { paths },
+		details: overviewPaths.length > 0 ? { paths, overview: overviewPaths } : { paths },
 		timestamp: Date.now(),
 	};
 }

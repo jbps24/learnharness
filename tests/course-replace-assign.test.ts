@@ -308,6 +308,7 @@ describe("createCourseAssignWorker in replace mode", () => {
 					fauxText(
 						JSON.stringify({
 							category: "material",
+							materialKind: "complete",
 							nodes: [{ nodeId: "n1", pages: "p. 1", method: "New route", sameRouteAsExisting: null, sameAsPreviousVersion: false }],
 							newSections: [{ title: "Extra", pages: "p. 9" }],
 						}),
@@ -342,7 +343,7 @@ describe("createCourseAssignWorker in replace mode", () => {
 		const engine = makeEngine(
 			[
 				fauxAssistantMessage([fauxToolCall("read_chunk", { chunk: 1 }, { id: "c1" })], { stopReason: "toolUse" }),
-				fauxAssistantMessage([fauxText(JSON.stringify({ category: "material", nodes: [] }))]),
+				fauxAssistantMessage([fauxText(JSON.stringify({ category: "material", materialKind: "complete", nodes: [] }))]),
 			],
 			seen,
 		);
@@ -510,6 +511,7 @@ describe("course-replace-assign edge cases", () => {
 					fauxText(
 						JSON.stringify({
 							category: "material",
+							materialKind: "complete",
 							nodes: [{ nodeId: "n1", pages: "p. 1", method: "New PDF route", sameRouteAsExisting: null, sameAsPreviousVersion: true }],
 							newSections: [{ title: "Extra PDF", pages: "p. 3" }],
 						}),

@@ -1,5 +1,5 @@
 import { projectionHeads } from "./compaction.ts";
-import { fileCategory, type CourseFile, type CourseMaterial, type CourseUpdate, type NodeMethod } from "./contracts/course.ts";
+import { fileCategory, fileMaterialKind, type CourseFile, type CourseMaterial, type CourseUpdate } from "./contracts/course.ts";
 import { derivePlanStatusesLh, type PlanTree } from "./contracts/plan.ts";
 import {
 	newCourseFilesNoteMessage,
@@ -10,6 +10,7 @@ import {
 	type LhMarkerMessage,
 	type LhMessage,
 } from "./native-messages.ts";
+import { bookRoutesForNode } from "./course-practice.ts";
 import { teachTags, unitIndexOf } from "./units.ts";
 
 function fileName(path: string): string {
@@ -26,8 +27,12 @@ function digestOf(text: string): string {
 	return hash.toString(16).padStart(8, "0");
 }
 
-function source(method: NodeMethod): string {
+function source(method: { path: string; pages?: string }): string {
 	return method.pages ? `${fileName(method.path)}, ${method.pages}` : fileName(method.path);
+}
+
+function overviewPaths(material: CourseMaterial): Set<string> {
+	return new Set(material.files.filter((f) => fileMaterialKind(f) === "overview").map((f) => f.path));
 }
 
 function methodNoteText(nodeId: string, title: string, material: CourseMaterial, binding: ReadonlySet<string>): string | null {
@@ -49,6 +54,16 @@ function methodNoteText(nodeId: string, title: string, material: CourseMaterial,
 		].join("\n");
 	}
 	const route = conflict?.chosen ? methods.filter((m) => m.path === conflict.chosen) : methods;
+	const books = bookRoutesForNode(material, nodeId, route);
+	if (books.length > 0) {
+		return [
+			`${head} the learner's course material for this node is an overview. What is taught, in which order, and with which results and notation comes from it:`,
+			...route.map((m) => `${m.method} (${source(m)})`),
+			"",
+			"How the course gets there, from the book it was built from. Teach, check and grade by this derivation, in the notation above:",
+			...books.map((b) => `${b.method} (${source({ path: b.path, pages: b.pages })})`),
+		].join("\n");
+	}
 	return [
 		`${head} the learner's course works this as follows. Teach, check and grade exactly this route:`,
 		...route.map((m) => `${m.method} (${source(m)})`),
@@ -137,11 +152,24 @@ export function courseNotesFor(
 
 	if (paths.length > 0) {
 		let newestFiles: string[] | null = null;
+		let newestOverview: string[] = [];
 		for (const m of live) {
-			if (m.role === "custom" && m.customType === "course-files") newestFiles = (m.details as { paths?: string[] } | null)?.paths ?? [];
+			if (m.role === "custom" && m.customType === "course-files") {
+				const d = m.details as { paths?: string[]; overview?: string[] } | null;
+				newestFiles = d?.paths ?? [];
+				newestOverview = d?.overview ?? [];
+			}
 		}
-		if (newestFiles === null || newestFiles.length !== paths.length || newestFiles.some((p, i) => p !== paths[i])) {
-			notes.push(newCourseFilesNoteMessage(paths));
+		const overviewSet = overviewPaths(material);
+		const overview = paths.filter((p) => overviewSet.has(p));
+		if (
+			newestFiles === null ||
+			newestFiles.length !== paths.length ||
+			newestFiles.some((p, i) => p !== paths[i]) ||
+			newestOverview.length !== overview.length ||
+			newestOverview.some((p, i) => p !== overview[i])
+		) {
+			notes.push(newCourseFilesNoteMessage(paths, overviewSet));
 		}
 
 		const liveDigests = new Set<string>();
@@ -229,11 +257,24 @@ export function practiceCourseNotesFor(
 
 	if (paths.length > 0) {
 		let newestFiles: string[] | null = null;
+		let newestOverview: string[] = [];
 		for (const m of live) {
-			if (m.role === "custom" && m.customType === "course-files") newestFiles = (m.details as { paths?: string[] } | null)?.paths ?? [];
+			if (m.role === "custom" && m.customType === "course-files") {
+				const d = m.details as { paths?: string[]; overview?: string[] } | null;
+				newestFiles = d?.paths ?? [];
+				newestOverview = d?.overview ?? [];
+			}
 		}
-		if (newestFiles === null || newestFiles.length !== paths.length || newestFiles.some((p, i) => p !== paths[i])) {
-			notes.push(newCourseFilesNoteMessage(paths));
+		const overviewSet = overviewPaths(material);
+		const overview = paths.filter((p) => overviewSet.has(p));
+		if (
+			newestFiles === null ||
+			newestFiles.length !== paths.length ||
+			newestFiles.some((p, i) => p !== paths[i]) ||
+			newestOverview.length !== overview.length ||
+			newestOverview.some((p, i) => p !== overview[i])
+		) {
+			notes.push(newCourseFilesNoteMessage(paths, overviewSet));
 		}
 	}
 
@@ -241,7 +282,10 @@ export function practiceCourseNotesFor(
 		const text = [
 			"[Course method] The learner's course solves these propositions as follows. Model solutions, hints and verdicts follow exactly these routes:",
 			...propositionMethods.map(
-				(m) => `- [${m.propositionId}] (from node \`${m.nodeId}\`): ${m.method} (${source(m)})`,
+				(m) =>
+					m.role === "book"
+						? `- [${m.propositionId}] (from node \`${m.nodeId}\`), how (book): ${m.method} (${source(m)})`
+						: `- [${m.propositionId}] (from node \`${m.nodeId}\`): ${m.method} (${source(m)})`,
 			),
 		].join("\n");
 		const digest = digestOf(text);

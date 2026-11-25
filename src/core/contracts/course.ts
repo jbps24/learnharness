@@ -9,6 +9,8 @@ export interface CourseFile {
 	error?: string;          // only when status is "failed"
 	category?: "material" | "exam" | "reference";
 	categoryBy?: "reader" | "learner";
+	materialKind?: "complete" | "overview";
+	materialKindBy?: "reader" | "learner";
 	fingerprint?: { size: number; mtimeMs: number; sha256: string };
 	changedOnDisk?: boolean;
 	update?: CourseUpdate;
@@ -50,6 +52,7 @@ export interface PropositionMethod {
 	propositionId: string;
 	lessonId: string;
 	nodeId: string;
+	role?: "book";
 	path: string;
 	pages?: string;
 	method: string;
@@ -74,14 +77,29 @@ export interface CourseMaterial {
 	propositionExamPatterns?: Array<ExamPattern & { propositionId: string; lessonId: string }>;
 	referenceIndex?: Array<{ path: string; from: "outline" | "contents" | "headings"; sections: ReferenceSection[] }>;
 	referencePointers?: Array<{ nodeId: string; path: string; sectionIds: string[] }>;
+	bookRoutes?: BookRoute[];
+}
+
+export interface BookRoute {
+	nodeId: string;
+	path: string;
+	sectionIds: string[];
+	pages: string;
+	method: string;
+	error?: string;
 }
 
 export const COURSE_METHOD_CAP = 1_500;
 export const EXAM_PATTERN_CAP = 1_200;
 export const REFERENCE_SECTIONS_CAP = 800;
 export const NEW_SECTIONS_CAP = 15;
+export const BOOK_ROUTE_CAP = 2_500;
 export const ASSIGNABLE_EXTENSIONS = [".pdf", ".md", ".markdown", ".txt", ".tex"] as const;
 
 export function fileCategory(file: CourseFile): "material" | "exam" | "reference" {
 	return file.category ?? "material";
+}
+
+export function fileMaterialKind(file: CourseFile): "complete" | "overview" {
+	return file.materialKind ?? "complete";
 }

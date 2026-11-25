@@ -2,7 +2,7 @@
 
 import React, { useRef, useState } from "react";
 import { HostDialog } from "@/components/host-dialog";
-import { fileCategory, filePathLabel } from "@/src/core";
+import { fileCategory, fileMaterialKind, filePathLabel } from "@/src/core";
 import type { CourseFile, CourseFileStatus, CourseMaterial } from "@/src/core";
 
 export const STATUS_LABEL: Record<CourseFileStatus, string> = {
@@ -24,6 +24,7 @@ interface Block {
 	pages?: string;
 	method: string;
 	conflicted: boolean;
+	nodeId?: string;
 }
 
 function blocksOf(
@@ -50,6 +51,7 @@ function blocksOf(
 		.sort((a, b) => (nodeOrder.get(a.nodeId) ?? 0) - (nodeOrder.get(b.nodeId) ?? 0))
 		.map((m) => ({
 			key: m.nodeId,
+			nodeId: m.nodeId,
 			title: titleOf.get(m.nodeId)!,
 			pages: m.pages,
 			method: m.method,
@@ -82,18 +84,44 @@ function referenceGroupsOf(file: CourseFile, material: CourseMaterial, nodes: Ar
 		.filter((group) => group.sections.length > 0);
 }
 
-const CATEGORY_LABEL = { material: "Course material", exam: "Exams", reference: "Reference" } as const;
+/** An Overview file's book route line for one node (plan 020 part 5): the stored route, a failure, or "reading" while a target is active; null otherwise. */
+function bookRouteLine(material: CourseMaterial, file: CourseFile, nodeId: string) {
+	if (!file.binding) return null;
+	const completePaths = new Set(
+		material.files
+			.filter((f) => f.binding && fileCategory(f) === "material" && fileMaterialKind(f) !== "overview")
+			.map((f) => f.path),
+	);
+	if (material.methods.some((m) => m.nodeId === nodeId && completePaths.has(m.path))) return null;
+	const bindingRefs = new Set(
+		material.files
+			.filter((f) => f.binding && fileCategory(f) === "reference")
+			.map((f) => f.path),
+	);
+	const routes = (material.bookRoutes ?? []).filter((r) => r.nodeId === nodeId && bindingRefs.has(r.path));
+	const stored = routes.find((r) => r.error === undefined && r.method !== "");
+	if (stored) return { kind: "stored" as const, route: stored };
+	const failed = routes.find((r) => r.error !== undefined);
+	if (failed) return { kind: "failed" as const, error: failed.error! };
+	const hasActivePointer = (material.referencePointers ?? []).some(
+		(p) => p.nodeId === nodeId && p.sectionIds.length > 0 && bindingRefs.has(p.path),
+	);
+	return hasActivePointer ? { kind: "reading" as const } : null;
+}
+
+const CATEGORY_LABEL ={ material: "Course material", exam: "Exams", reference: "Reference" } as const;
 
 /** One file's details (plan 009 part 2): path, status and, once assigned, each
  *  plan node's pages and method text; for an exam file the task patterns
  *  (plan 010 part 4) and the move button. Reads the panel's data; no fetch. */
-export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, onClose, onMove, onRetry, onRemove, onReplace }: {
+export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, onClose, onMove, onMarkKind, onRetry, onRemove, onReplace }: {
 	file: CourseFile | null;
 	material: CourseMaterial;
 	nodes: Array<{ id: string; title: string }>;
 	lessonNodes: Array<{ lessonId: string; id: string; title: string }>;
 	onClose: () => void;
 	onMove?: (file: CourseFile, category: "material" | "exam" | "reference") => void;
+	onMarkKind?: (file: CourseFile, kind: "complete" | "overview") => void;
 	onRetry?: (file: CourseFile) => Promise<boolean>;
 	onRemove?: (file: CourseFile) => Promise<boolean>;
 	/** Resolves to the route's error text, or null when the replacement went through. */
@@ -141,6 +169,7 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 	const blocks = file.status === "assigned" && category === "material" ? blocksOf(file, material, nodes, lessonNodes) : [];
 	const examGroups = file.status === "assigned" && isExam ? examGroupsOf(file, material, nodes) : [];
 	const referenceGroups = file.status === "assigned" && isReference ? referenceGroupsOf(file, material, nodes) : [];
+	const isOverview = category === "material" && fileMaterialKind(file) === "overview";
 	const toc = isReference ? material.referenceIndex?.find((r) => r.path === file.path) : undefined;
 	const frame = (
 		<div
@@ -198,6 +227,9 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 												{s.label ? `§${s.label} ` : ""}{s.title} (pp. {s.startPage}–{s.endPage})
 											</div>
 										))}
+										{(material.bookRoutes ?? []).some((r) => r.nodeId === node.id && r.path === file.path && r.error === undefined && r.method !== "") && (
+											<div className="mt-1 text-muted-foreground">Book route stored</div>
+										)}
 									</li>
 								))}
 							</ul>
@@ -239,6 +271,19 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 										{block.conflicted && <span title={CONFLICT_TIP}> ⚠</span>}
 									</div>
 									<div className="mt-0.5 whitespace-pre-wrap text-muted-foreground">{block.method}</div>
+									{isOverview && block.nodeId !== undefined && (() => {
+										const line = bookRouteLine(material, file, block.nodeId);
+										if (!line) return null;
+										if (line.kind === "stored") {
+											return (
+												<div className="mt-1">
+													<div>Book route ({filePathLabel(line.route.path)}{line.route.pages ? `, ${line.route.pages}` : ""})</div>
+													<div className="mt-0.5 whitespace-pre-wrap text-muted-foreground">{line.route.method}</div>
+												</div>
+											);
+										}
+										return <div className="mt-1 text-muted-foreground">{line.kind === "failed" ? `Book route failed: ${line.error}` : "Reading the book…"}</div>;
+									})()}
 								</li>
 							))}
 						</ul>
@@ -288,6 +333,12 @@ export function CourseFileDetailsDialog({ file, material, nodes, lessonNodes, on
 						onClick={() => void onRetry(file).then((ok) => setRetryFailed(!ok))}
 						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50">
 						Retry
+					</button>
+				)}
+				{onMarkKind && category === "material" && (
+					<button type="button" onClick={() => onMarkKind(file, isOverview ? "complete" : "overview")}
+						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+						{isOverview ? "Mark as Complete" : "Mark as Overview"}
 					</button>
 				)}
 				{onMove && (["material", "exam", "reference"] as const).filter((c) => c !== category).map((target) => (

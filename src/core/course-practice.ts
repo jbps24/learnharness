@@ -1,5 +1,5 @@
 import type { ChatRecord } from "./contracts/chat.ts";
-import { fileCategory, type CourseFile, type CourseMaterial, type PropositionMethod } from "./contracts/course.ts";
+import { fileCategory, fileMaterialKind, type BookRoute, type CourseFile, type CourseMaterial, type PropositionMethod } from "./contracts/course.ts";
 import type { GraphNode } from "./contracts/graph.ts";
 import type { PlanTree } from "./contracts/plan.ts";
 import type { LhMessage } from "./native-messages.ts";
@@ -31,6 +31,21 @@ function bindingMethodsAt(material: CourseMaterial, nodeId: string, binding: Rea
 	return [];
 }
 
+/** The stored, non-failed book routes of a node whose binding routes all come from Overview files (plan 020 part 4). */
+export function bookRoutesForNode(
+	material: CourseMaterial,
+	nodeId: string,
+	routes: readonly { path: string }[],
+): BookRoute[] {
+	if (routes.length === 0) return [];
+	const kinds = new Map(material.files.map((f) => [f.path, f] as const));
+	if (routes.some((r) => { const f = kinds.get(r.path); return !f || fileMaterialKind(f) !== "overview"; })) return [];
+	const references = new Set(material.files.filter((f) => f.binding && fileCategory(f) === "reference").map((f) => f.path));
+	return (material.bookRoutes ?? []).filter(
+		(b) => b.nodeId === nodeId && references.has(b.path) && !b.error && b.method !== "",
+	);
+}
+
 /** The snapshot a practice session takes from the lessons its picks came from (plan 007 part 6, choice 7: never refreshed). */
 export function inheritCourseMaterial(
 	picks: readonly GraphNode[],
@@ -52,7 +67,8 @@ export function inheritCourseMaterial(
 			}
 			const nodeId = nodeAtMessage(lesson.messages, lesson.tree, point.messageId);
 			if (nodeId === null) continue;
-			for (const m of bindingMethodsAt(material, nodeId, binding)) {
+			const routes = bindingMethodsAt(material, nodeId, binding);
+			for (const m of routes) {
 				const key = `${pick.id}\n${m.path}\n${m.method}`;
 				if (seen.has(key)) continue;
 				seen.add(key);
@@ -63,6 +79,20 @@ export function inheritCourseMaterial(
 					path: m.path,
 					...(m.pages ? { pages: m.pages } : {}),
 					method: m.method,
+				});
+			}
+			for (const b of bookRoutesForNode(material, nodeId, routes)) {
+				const key = `${pick.id}\nbook\n${b.path}\n${b.method}`;
+				if (seen.has(key)) continue;
+				seen.add(key);
+				propositionMethods.push({
+					propositionId: pick.id,
+					lessonId: lesson.id,
+					nodeId,
+					role: "book",
+					path: b.path,
+					...(b.pages ? { pages: b.pages } : {}),
+					method: b.method,
 				});
 			}
 			const examPaths = new Set(material.files.filter((f) => f.binding && fileCategory(f) === "exam").map((f) => f.path));

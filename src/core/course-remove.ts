@@ -2,7 +2,7 @@ import type { CourseMaterial } from "./contracts/course.ts";
 
 /** Plan 014: drop a course file and every stored entry that names it. Changes nothing else. */
 export function removeCourseFile(material: CourseMaterial, path: string): CourseMaterial {
-	const { examPatterns, referenceIndex, referencePointers, propositionMethods, propositionExamPatterns, ...others } = material;
+	const { examPatterns, referenceIndex, referencePointers, propositionMethods, propositionExamPatterns, bookRoutes, ...others } = material;
 	return {
 		...others,
 		files: material.files.filter((file) => file.path !== path),
@@ -18,6 +18,7 @@ export function removeCourseFile(material: CourseMaterial, path: string): Course
 		...(referenceIndex ? { referenceIndex: referenceIndex.filter((entry) => entry.path !== path) } : {}),
 		...(referencePointers ? { referencePointers: referencePointers.filter((entry) => entry.path !== path) } : {}),
 		...(propositionMethods ? { propositionMethods: propositionMethods.filter((entry) => entry.path !== path) } : {}),
+		...(bookRoutes ? { bookRoutes: bookRoutes.filter((entry) => entry.path !== path) } : {}),
 		...(propositionExamPatterns ? { propositionExamPatterns: propositionExamPatterns.filter((entry) => entry.path !== path) } : {}),
 	};
 }

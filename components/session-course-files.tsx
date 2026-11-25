@@ -7,7 +7,7 @@ import { usePopoverDismiss } from "./popover-dismiss.ts";
 import {
 	CONFLICT_TIP, CourseFileDetailsDialog, RETRY_FAILED_TEXT, RETRY_UNTICKED_TIP, STATUS_LABEL,
 } from "./course-file-details-dialog.tsx";
-import { fileCategory, filePathLabel } from "@/src/core";
+import { fileCategory, fileMaterialKind, filePathLabel } from "@/src/core";
 import type { CourseFile, CourseMaterial } from "@/src/core";
 
 interface CourseResponse {
@@ -175,6 +175,18 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 		}
 	};
 
+	const markKind = async (file: CourseFile, materialKind: "complete" | "overview") => {
+		try {
+			await fetch(`/api/chats/${chatId}/course`, {
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ path: file.path, materialKind }),
+			});
+		} catch {
+			/* the label stays as it was; the re-read event updates it on success */
+		}
+	};
+
 	const retryFile = async (file: CourseFile): Promise<boolean> => {
 		try {
 			const res = await fetch(`/api/chats/${chatId}/course`, {
@@ -291,6 +303,11 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 											{STATUS_LABEL[file.status]}
 										</span>
 									)}
+									{file.status === "assigned" && fileCategory(file) === "material" && (
+										<span className="shrink-0 rounded bg-muted px-1 text-muted-foreground">
+											{fileMaterialKind(file) === "overview" ? "Overview" : "Complete"}
+										</span>
+									)}
 									{file.via === "inherited" && <span className="shrink-0 text-muted-foreground">from lesson</span>}
 									{conflicted && <span title={CONFLICT_TIP} className="shrink-0">⚠</span>}
 									<button type="button" data-testid="course-file-details"
@@ -311,7 +328,7 @@ export function SessionCourseFiles({ chatId, active }: { chatId: string; active:
 			{hint && <div className="mt-1 text-muted-foreground">{hint}</div>}
 			<CourseFileDetailsDialog file={files.find((f) => f.path === detailsPath) ?? null}
 				material={data.material} nodes={data.nodes} lessonNodes={data.lessonNodes ?? []}
-				onClose={() => setDetailsPath(null)} onMove={(f, category) => void moveFile(f, category)} onRetry={retryFile} onRemove={removeFile} onReplace={replaceFile} />
+				onClose={() => setDetailsPath(null)} onMove={(f, category) => void moveFile(f, category)} onMarkKind={(f, kind) => void markKind(f, kind)} onRetry={retryFile} onRemove={removeFile} onReplace={replaceFile} />
 		</div>
 	);
 }

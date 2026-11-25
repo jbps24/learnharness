@@ -57,6 +57,7 @@ export interface ReferencePointerNodeOutput {
 export type AssignmentResult =
 	| {
 			category: "material";
+			materialKind?: "complete" | "overview";
 			nodes: AssignmentNodeOutput[];
 			newSections?: Array<{ title: string; pages: string }>;
 	  }
@@ -83,6 +84,62 @@ export interface CourseAssignWorkerInput {
 }
 
 export type CourseAssignWorker = (input: CourseAssignWorkerInput) => Promise<CourseAssignWorkerResult>;
+
+export interface CourseLabelWorkerInput {
+	chatId: string;
+	path: string;
+	abortSignal: AbortSignal;
+}
+
+export type CourseLabelWorkerResult =
+	| { ok: true; materialKind: "complete" | "overview" }
+	| { ok: false; error: string };
+
+export type CourseLabelWorker = (input: CourseLabelWorkerInput) => Promise<CourseLabelWorkerResult>;
+
+export type ParseMaterialKindResult =
+	| { ok: true; materialKind: "complete" | "overview" }
+	| { ok: false; problems: string[] };
+
+export function parseMaterialKind(text: string): ParseMaterialKindResult {
+	let raw: unknown;
+	try {
+		raw = JSON.parse(stripFence(text));
+	} catch {
+		return { ok: false, problems: ["the output is not valid JSON"] };
+	}
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+		return { ok: false, problems: ["the output must be one JSON object with a \"materialKind\""] };
+	}
+	const kind = (raw as { materialKind?: unknown }).materialKind;
+	if (kind !== "complete" && kind !== "overview") {
+		return { ok: false, problems: ["\"materialKind\" must be \"complete\" or \"overview\""] };
+	}
+	return { ok: true, materialKind: kind };
+}
+
+/** Plan 020 part 2: binding, assigned material files the reader has not labelled yet. */
+export function labelTargets(material: CourseMaterial): string[] {
+	return material.files
+		.filter((file) => file.binding && file.status === "assigned" && fileCategory(file) === "material" && file.materialKind === undefined)
+		.map((file) => file.path);
+}
+
+/** A learner's label stays; otherwise the reader's label is stored. */
+export function applyMaterialKind(
+	material: CourseMaterial,
+	filePath: string,
+	materialKind: "complete" | "overview",
+): CourseMaterial {
+	return {
+		...material,
+		files: material.files.map((file) =>
+			file.path !== filePath || (file.materialKindBy === "learner" && file.materialKind !== undefined)
+				? file
+				: { ...file, materialKind, materialKindBy: "reader" as const },
+		),
+	};
+}
 
 export type ParseAssignmentResult =
 	| { ok: true; value: AssignmentResult }
@@ -127,7 +184,9 @@ You get the lesson's plan nodes (id, title, summary). For every node this file a
 
 Some nodes already carry a method from another course file. For those, also decide: does this file use the same route (same steps, possibly other wording or notation) or a different route? Set sameRouteAsExisting to true or false.
 
-For material, return ONE JSON object and nothing else: {"category":"material","nodes":[{"nodeId":string,"pages":string,"method":string,"sameRouteAsExisting":boolean|null}]}. Each method at most ${COURSE_METHOD_CAP.toLocaleString("en-US")} characters.
+For material, also decide how complete it is. **complete**: it works the course's derivations and procedures through step by step, as a script, lecture notes or a transcript of the lecture (Mitschrift) do. **overview**: it shows what the course covers, its results and formulas, but mostly not the steps between them, as lecture slides usually do. Set "materialKind" to "complete" or "overview".
+
+For material, return ONE JSON object and nothing else: {"category":"material","materialKind":"complete"|"overview","nodes":[{"nodeId":string,"pages":string,"method":string,"sameRouteAsExisting":boolean|null}]}. Each method at most ${COURSE_METHOD_CAP.toLocaleString("en-US")} characters.
 
 For an **exam**, set "category":"exam" and, for every plan node one of its tasks exercises, write one entry per task: source (the task as the file names it, with the exam's label if it has one, e.g. "WS22 A3b"), pages, pattern (the task type; what is given; what is asked; the expected answer format such as a sketch, a value, a short justification; typical numbers or functions; the points), and, only when the file contains a solution, grading (which steps earn how many points and the expected final form). Write in the file's language. Never invent a solution the file does not contain. Return ONE JSON object and nothing else: {"category":"exam","nodes":[{"nodeId":string,"source":string,"pages":string,"pattern":string,"grading"?:string}]}. Each pattern and each grading at most ${EXAM_PATTERN_CAP.toLocaleString("en-US")} characters.`;
 
@@ -184,6 +243,10 @@ export function parseAssignment(
 	if (!Array.isArray(entries)) return { ok: false, problems: ["\"nodes\" must be an array"] };
 
 	const problems: string[] = [];
+	const materialKind = (raw as { materialKind?: unknown }).materialKind;
+	if (category === "material" && materialKind !== "complete" && materialKind !== "overview") {
+		problems.push("\"materialKind\" must be \"complete\" or \"overview\"");
+	}
 	const known = new Set(targetIds);
 	const seen = new Set<string>();
 	const nodes: AssignmentNodeOutput[] = [];
@@ -293,7 +356,8 @@ export function parseAssignment(
 	}
 	if (problems.length > 0) return { ok: false, problems };
 	if (category === "exam") return { ok: true, value: { category, nodes: examNodes } };
-	return { ok: true, value: replace ? { category, nodes, newSections } : { category, nodes } };
+	const kind = materialKind as "complete" | "overview";
+	return { ok: true, value: replace ? { category, materialKind: kind, nodes, newSections } : { category, materialKind: kind, nodes } };
 }
 
 export function applyAssignment(
@@ -312,7 +376,11 @@ export function applyAssignment(
 		const files = material.files.map((file) => {
 			if (file.path !== filePath) return file;
 			const { error: _error, ...kept } = file;
-			return { ...kept, status: "assigned" as const, category, categoryBy };
+			const labelled =
+				category === "material" && result.category === "material" && result.materialKind && !(file.materialKindBy === "learner" && file.materialKind !== undefined)
+					? { materialKind: result.materialKind, materialKindBy: "reader" as const }
+					: {};
+			return { ...kept, ...labelled, status: "assigned" as const, category, categoryBy };
 		});
 		return { ...material, ...rest, files };
 	};

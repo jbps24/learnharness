@@ -179,6 +179,7 @@ describe("course replace queue and handler integration", () => {
 				fauxText(
 					JSON.stringify({
 						category: "material",
+						materialKind: "complete",
 						nodes: [{ nodeId: "n1", pages: "p. 1", method: "New n1 route", sameRouteAsExisting: null, sameAsPreviousVersion: false }],
 						newSections: [{ title: "Bonus", pages: "p. 5" }],
 					}),
@@ -286,6 +287,7 @@ describe("course replace queue and handler integration", () => {
 				fauxText(
 					JSON.stringify({
 						category: "material",
+						materialKind: "complete",
 						nodes: [{ nodeId: "only-node", pages: "p. 1", method: "Old route", sameRouteAsExisting: null, sameAsPreviousVersion: true }],
 						newSections: [],
 					}),

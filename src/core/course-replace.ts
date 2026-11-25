@@ -15,6 +15,10 @@ export function startReplacement(
 			if (f.path !== oldPath) return f;
 			const { error: _error, changedOnDisk: _changed, fingerprint: _fingerprint, update: _update, ...kept } = f;
 			const next: CourseFile = { ...kept, path: newPath, status: "pending" };
+			if (next.materialKindBy !== "learner") {
+				delete next.materialKind;
+				delete next.materialKindBy;
+			}
 			if (fileCategory(f) === "material") {
 				next.update = {
 					at: now,
@@ -41,6 +45,7 @@ export function startReplacement(
 	if (material.examPatterns) result.examPatterns = material.examPatterns.filter((p) => p.path !== oldPath);
 	if (material.referenceIndex) result.referenceIndex = material.referenceIndex.filter((r) => r.path !== oldPath);
 	if (material.referencePointers) result.referencePointers = material.referencePointers.filter((r) => r.path !== oldPath);
+	if (material.bookRoutes) result.bookRoutes = material.bookRoutes.filter((r) => r.path !== oldPath);
 	return result;
 }
 

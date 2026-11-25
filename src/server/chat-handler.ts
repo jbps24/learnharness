@@ -66,8 +66,10 @@ import { COMPACTION_RESERVE_TOKENS } from "../core/compaction.ts";
 import { catalogContextLimits, refreshConnectionCatalog } from "./model-catalog.ts";
 import { emit } from "../core/events.ts";
 import { courseFilesUsed, mergeCourseFiles } from "../core/course-files.ts";
-import { assignmentTargets } from "../core/course-assign.ts";
-import { createCourseAssignWorker } from "../agent/subagents/course-assign.ts";
+import { assignmentTargets, labelTargets } from "../core/course-assign.ts";
+import type { ChatStore } from "../core/ports.ts";
+import { createBookRouteWorker } from "../agent/subagents/book-route.ts";
+import { createCourseAssignWorker, createCourseLabelWorker } from "../agent/subagents/course-assign.ts";
 import { createCourseAssignQueue } from "./course-assign-queue.ts";
 import { detectCourseFileChanges, mergeDetectedCourseFileChanges } from "./course-fingerprint.ts";
 export { detectCourseFileChanges };
@@ -151,7 +153,32 @@ const courseAssignQueue = createCourseAssignQueue({
 	chatStore: stores.chatStore,
 	jobStore: stores.jobStore,
 	worker: createCourseAssignWorker({ engineFor: () => resolveEngine("pdfReader") }),
+	labelWorker: createCourseLabelWorker({ engineFor: () => resolveEngine("pdfReader") }),
+	bookRouteWorker: createBookRouteWorker({ engineFor: () => resolveEngine("pdfReader") }),
 	emit,
+});
+
+export interface MaterialKindBackfillDeps {
+	chatStore: Pick<ChatStore, "getChat">;
+	enqueueLabel: (chatId: string, paths: readonly string[]) => Promise<void>;
+}
+
+/** Plan 020 part 2: queue label jobs for assigned material files missing materialKind (at most once retry per app run per file). */
+export function createMaterialKindBackfill(deps: MaterialKindBackfillDeps): (chatId: string) => void {
+	const attempts = new Map<string, number>();
+	return (chatId) => {
+		const material = deps.chatStore.getChat(chatId)?.courseMaterial;
+		if (!material) return;
+		const due = labelTargets(material).filter((path) => (attempts.get(`${chatId}\0${path}`) ?? 0) < 2);
+		if (due.length === 0) return;
+		for (const path of due) attempts.set(`${chatId}\0${path}`, (attempts.get(`${chatId}\0${path}`) ?? 0) + 1);
+		void deps.enqueueLabel(chatId, due).catch((err) => console.error(`[chat ${chatId}] course label queue failed:`, err));
+	};
+}
+
+const backfillMaterialKinds = createMaterialKindBackfill({
+	chatStore: stores.chatStore,
+	enqueueLabel: (chatId, paths) => courseAssignQueue.enqueueLabel(chatId, paths),
 });
 
 /** Plan 007 part 3, trigger 1: assign the files a turn just added. */
@@ -198,6 +225,12 @@ function assignAfterPlanInit(chatId: string, previousTree: PlanTree | undefined,
 		emit("course-material-changed", { chatId });
 	}
 	if (result.targets.length > 0) void courseAssignQueue.enqueue(chatId, result.targets);
+	syncBookRoutes(chatId);
+}
+
+/** Plan 020 part 3: compute due book routes, prune stale ones, and enqueue missing targets. */
+export function syncBookRoutes(chatId: string): void {
+	void courseAssignQueue.syncBookRoutes(chatId).catch((err) => console.error(`[chat ${chatId}] book route sync failed:`, err));
 }
 
 function settlementErrorText(error: unknown): string {
@@ -1038,6 +1071,7 @@ export async function handleChatInput(
 				const stamped = persistTurn(stores.chatStore, chatId, persistBaseCount, admittedMessages, isAborted);
 				noteSteersDurable(chatId, stores.chatStore.getChat(chatId)?.messages ?? stamped);
 					assignAddedCourseFiles(chatId, collectCourseFiles(chatId, record.messages.length));
+				backfillMaterialKinds(chatId);
 				// usage log append (idempotent per turn id) — the stats bar
 				// refolds this on the client after the turn settles. The
 				// provenance message is the turn's FIRST new assistant message.

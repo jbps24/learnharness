@@ -132,9 +132,9 @@ Desktop app (`ELECTRON_RUN_AS_NODE` unset):
 
 | Part | Status |
 |---|---|
-| 1 Contracts, store, API | not started |
-| 2 Reader labels material | not started |
-| 3 Book routes | not started |
-| 4 Tutor notes, prompt, practice | not started |
-| 5 UI and docs | not started |
+| 1 Contracts, store, API | green (full), build-review/20261125-140722-020-part-1; BookRoute shape fixed to plan in build-review/20261125-163529-020-part-1 (--issue) |
+| 2 Reader labels material | green (full), build-review/20261125-143502-020-part-2; label backfill runs at the end of every turn, max 2 attempts per file |
+| 3 Book routes | green (full), build-review/20261125-145447-020-part-3; one `npm test` hung 300 s and was killed |
+| 4 Tutor notes, prompt, practice | green (full), build-review/20261125-154247-020-part-4 |
+| 5 UI and docs | green (light), build-review/20261125-161755-020-part-5; open: 'Reading the book…' also shows for a pointed node that is not due (no queued/running signal) |
 | Build and install | not started |
